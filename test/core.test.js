@@ -162,6 +162,42 @@ t("BOM·이스케이프", () => {
   assert.strictEqual(csv.trim().split("\r\n").length, 2);
 });
 
+console.log("이전설치 출발지·도착지");
+const MV = R({ items: [{ type: "LG 2단", qty: 1, work: "이전설치" }], customer: { name: "이사고객", phone: "", address: "수원시 영통구 1" }, moveTo: { address: "용인시 기흥구 2", floor: "7", elevator: "있음" } });
+t("이전설치 여부", () => {
+  assert.ok(C.isMove(MV));
+  assert.ok(!C.isMove(R({})));
+});
+t("도착지 주소로 검색", () => assert.ok(C.searchMatch(MV, "기흥구")));
+t("CSV 도착지 열", () => {
+  const rows = C.toCSV([MV, R({ moveTo: { address: "무시됨" } })], []).split("\r\n");
+  assert.ok(rows[0].includes("주소(출발지),도착지 주소"));
+  assert.ok(rows[1].includes("수원시 영통구 1,용인시 기흥구 2"));
+  assert.ok(!rows[2].includes("무시됨"), "이전설치가 아니면 도착지 비움");
+});
+
+console.log("작업 사진");
+const PR = R({ photos: {
+  a1: { kind: "after", by: "s1", at: "2026-10-21T03:00:00Z" },
+  b1: { kind: "before", by: "s2", at: "2026-10-21T01:00:00Z" },
+  b2: { kind: "before", by: "s1", at: "2026-10-21T02:00:00Z" },
+  gone: null
+} });
+t("전/후 목록(삭제 제외, 시간순)", () => {
+  assert.deepStrictEqual(C.photoList(PR, "before").map(p => p.id), ["b1", "b2"]);
+  assert.deepStrictEqual(C.photoList(PR, "after").map(p => p.id), ["a1"]);
+  assert.deepStrictEqual(C.photoList(PR).map(p => p.id), ["b1", "b2", "a1"]);
+});
+t("사진 수", () => {
+  assert.deepStrictEqual(C.photoCounts(PR), { before: 2, after: 1, total: 3 });
+  assert.deepStrictEqual(C.photoCounts(R({})), { before: 0, after: 0, total: 0 });
+});
+t("CSV 사진 수 열", () => {
+  const csv = C.toCSV([PR], []);
+  assert.ok(csv.split("\r\n")[0].endsWith(",사진(전/후)"));
+  assert.ok(csv.split("\r\n")[1].endsWith(",2/1"));
+});
+
 console.log("내비 링크");
 const ADDR = "서울 강남구 테헤란로 1, 101동 1203호";
 const ENC = encodeURIComponent(ADDR);

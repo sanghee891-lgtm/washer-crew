@@ -173,6 +173,28 @@
     return cleanItems(items).reduce(function (s, it) { return s + it.qty; }, 0);
   }
 
+  // ---- 작업 사진 ----
+  // r.photos = { assetId: {kind: "before"|"after", by, at} }, 지운 사진은 null
+  function photoList(r, kind) {
+    var ph = (r && r.photos) || {};
+    return Object.keys(ph).filter(function (id) {
+      var p = ph[id];
+      return p && typeof p === "object" && (!kind || p.kind === kind);
+    }).map(function (id) {
+      return { id: id, kind: ph[id].kind === "after" ? "after" : "before", by: ph[id].by || "", at: ph[id].at || "" };
+    }).sort(function (a, b) { return a.at < b.at ? -1 : a.at > b.at ? 1 : (a.id < b.id ? -1 : 1); });
+  }
+  function photoCounts(r) {
+    var all = photoList(r);
+    var before = all.filter(function (p) { return p.kind === "before"; }).length;
+    return { before: before, after: all.length - before, total: all.length };
+  }
+
+  // 작업 중 '이전설치'가 있으면 출발지(customer.address) → 도착지(moveTo.address)
+  function isMove(r) {
+    return cleanItems(r && r.items).some(function (it) { return it.work === "이전설치"; });
+  }
+
   function isPaid(r) { return !!(r.payment && r.payment.paid); }
 
   // ---- 집계 ----
@@ -245,7 +267,7 @@
     q = String(q || "").trim().toLowerCase();
     if (!q) return true;
     var c = r.customer || {};
-    var hay = [c.name, c.address, c.phone, r.note,
+    var hay = [c.name, c.address, (r.moveTo || {}).address, c.phone, r.note,
       (r.site || {}).memo, modelsSummary(r.items), itemsSummary(r.items)].join(" ").toLowerCase();
     var digits = normalizePhone(q);
     if (digits.length >= 3 && normalizePhone(c.phone).indexOf(digits) >= 0) return true;
@@ -275,19 +297,21 @@
   function toCSV(list, staff) {
     var names = {};
     (staff || []).forEach(function (p) { names[p.id] = p.name; });
-    var head = ["예약일자", "요일", "시작", "종료", "소요시간", "상태", "고객명", "전화번호", "주소",
-      "기기", "모델명", "작업", "대수", "금액", "결제방법", "입금", "참여직원", "층수", "엘리베이터", "주차", "메모"];
+    var head = ["예약일자", "요일", "시작", "종료", "소요시간", "상태", "고객명", "전화번호", "주소(출발지)", "도착지 주소",
+      "기기", "모델명", "작업", "대수", "금액", "결제방법", "입금", "참여직원", "층수", "엘리베이터", "주차", "메모", "사진(전/후)"];
     var rows = [head];
     sortReservations(list).forEach(function (r) {
       var c = r.customer || {}, site = r.site || {}, p = r.payment || {};
       rows.push([
         r.date, WEEKDAYS[weekdayOf(r.date)], r.time, endTime(r.time, r.durationMin), durationLabel(r.durationMin),
         STATUS[r.status] || "", c.name || "", formatPhone(c.phone), c.address || "",
+        isMove(r) ? ((r.moveTo || {}).address || "") : "",
         itemsSummary(r.items), modelsSummary(r.items), worksSummary(r.items), unitCount(r.items),
         parseWon(r.total), p.method || "미정", p.paid ? "입금완료" : "미입금",
         assignedWorkers(r).map(function (id) { return names[id] || "(삭제된 직원)"; }).join(" "),
         site.floor || "", site.elevator || "", site.parking || "",
-        [site.memo, r.note].filter(Boolean).join(" / ")
+        [site.memo, r.note].filter(Boolean).join(" / "),
+        (function () { var pc = photoCounts(r); return pc.total ? pc.before + "/" + pc.after : ""; })()
       ]);
     });
     return "﻿" + rows.map(function (row) { return row.map(csvCell).join(","); }).join("\r\n") + "\r\n";
@@ -353,6 +377,7 @@
     normalizePhone: normalizePhone, formatPhone: formatPhone,
     cleanItems: cleanItems, itemsSummary: itemsSummary, worksSummary: worksSummary,
     modelsSummary: modelsSummary, unitCount: unitCount, isPaid: isPaid,
+    photoList: photoList, photoCounts: photoCounts, isMove: isMove,
     summarize: summarize, filterMonth: filterMonth, summarizeYear: summarizeYear,
     sortReservations: sortReservations, searchMatch: searchMatch,
     validateReservation: validateReservation, toCSV: toCSV

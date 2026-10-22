@@ -13,6 +13,7 @@
     renderedTab: null, wide: false, statsTable: false
   };
   var F = null; // 열린 입력 폼 상태
+  var P = null; // 열린 사진 창 상태 {id, view, confirmDel, busy}
 
   // ---------------- 유틸 ----------------
   function $(sel, el) { return (el || document).querySelector(sel); }
@@ -41,6 +42,7 @@
 
   var ICON = {
     phone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/></svg>',
+    camera: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.5"/></svg>',
     pin: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>',
     close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>'
   };
@@ -70,7 +72,7 @@
       if (onClick) onClick(e);
     };
   }
-  function closeModal() { var m = $("#modal"); m.hidden = true; m.innerHTML = ""; }
+  function closeModal() { var m = $("#modal"); m.hidden = true; m.innerHTML = ""; m.onchange = null; P = null; if (F) refreshFormLive(); }
 
   function writeError(e) {
     var code = e && e.code;
@@ -92,20 +94,29 @@
     if (mq.addEventListener) mq.addEventListener("change", onMq); else mq.addListener(onMq);
     window.addEventListener("resize", debounce(function () { measureTop(); if (S.tab === "stats") renderBody(); }, 150));
     bindStatic();
+    // 불러오지 못한 사진은 빈 칸으로(권한·삭제된 파일)
+    document.addEventListener("error", function (e) {
+      var t = e.target;
+      if (t && t.tagName === "IMG" && /\/_blob\//.test(t.getAttribute("src") || "")) {
+        t.classList.add("broken");
+        if (t.parentNode) t.parentNode.title = "사진을 불러올 수 없어요";
+      }
+    }, true);
     render();
 
     var cl = window.claude;
     if (!cl || typeof cl.use !== "function") { S.conn = "nodb"; S.loading = false; render(); return; }
-    var got = await Promise.all([cl.use("db"), cl.use("user"), cl.use("downloads")].map(function (p) {
+    var got = await Promise.all([cl.use("db"), cl.use("user"), cl.use("downloads"), cl.use("assets")].map(function (p) {
       return Promise.resolve(p).catch(function () { return null; });
     }));
-    S.db = got[0]; S.user = got[1]; S.downloads = got[2];
+    S.db = got[0]; S.user = got[1]; S.downloads = got[2]; S.assets = got[3];
     if (!S.db) { S.conn = "nodb"; S.loading = false; render(); return; }
     S.conn = "ok";
     if (S.user) {
       try { S.uid = await S.user.id(); } catch (e) { S.uid = null; }
       S.myStaffId = store(meKey()) || null; // 한 기기를 여러 계정이 쓰면 계정별로 따로 기억
       try { if ((await S.user.can("data.write")) === false) S.readOnly = true; } catch (e) { /* 모름 → 쓰기 시도 */ }
+      try { S.isOwner = await S.user.isOwner(); } catch (e) { S.isOwner = false; }
     }
     S.db.doc("config/staff").onSnapshot(function (snap) {
       var d = snap.exists ? snap.data() : null;
@@ -143,6 +154,7 @@
         S.loading = false;
         render();
         if (F) refreshFormLive();
+        if (P) renderPhotos();
       }, function (e) {
         S.loading = false;
         if (e && e.code === "revoked") { S.conn = "nodb"; }
@@ -354,12 +366,27 @@
         '<div class="c-items">' + esc(C.itemsSummary(r.items)) + ' <span class="w">' + esc(C.worksSummary(r.items)) + (models ? " · " + esc(models) : "") + "</span></div>" +
         '<div class="c-links">' +
           (c.phone ? '<button class="lk" data-act="phone">' + ICON.phone + '<span class="num">' + esc(C.formatPhone(c.phone)) + "</span></button>" : "") +
-          (c.address ? '<button class="lk" data-act="addr">' + ICON.pin + "<span>" + esc(c.address) + "</span></button>" : "") +
+          addrLinks(r) + photoBtn(r) +
         "</div>" +
         (pay ? '<div class="c-pay">' + pay + "</div>" : "") +
         (cf ? '<div class="c-warn" data-testid="conflict">' + esc(conflictText(r, cf)) + "</div>" : "") +
         '<div class="c-crew">' + crewHtml(r) + '<span class="c-act">' + acts + "</span></div>" +
       "</div></article>";
+  }
+
+  // 이전설치면 출발지 → 도착지 두 개, 아니면 주소 하나
+  function addrLinks(r) {
+    var c = r.customer || {}, to = r.moveTo || {};
+    if (C.isMove(r)) {
+      return (c.address ? '<button class="lk" data-act="addr" data-testid="addr-from">' + ICON.pin + '<em class="tag-from">출발</em><span>' + esc(c.address) + "</span></button>" : "") +
+        (to.address ? '<button class="lk" data-act="addr2" data-testid="addr-to">' + ICON.pin + '<em class="tag-to">도착</em><span>' + esc(to.address) + "</span></button>" : "");
+    }
+    return c.address ? '<button class="lk" data-act="addr">' + ICON.pin + "<span>" + esc(c.address) + "</span></button>" : "";
+  }
+  function photoBtn(r) {
+    var n = C.photoCounts(r).total;
+    if (!n && !(S.assets && canWrite())) return "";
+    return '<button class="lk" data-act="photos" data-testid="photos-btn">' + ICON.camera + '<span class="num">' + (n ? "사진 " + n : "사진 추가") + "</span></button>";
   }
 
   function tableHtml(rows, conflicts) {
@@ -383,7 +410,7 @@
         '<td class="nowrap num"><b>' + esc(r.time) + "</b>~" + esc(C.endTime(r.time, r.durationMin)) + '<span class="sub">' + C.durationLabel(r.durationMin) + "</span></td>" +
         "<td><b>" + esc(c.name || "") + "</b>" + (cf ? '<span class="sub" style="color:var(--bad)" data-testid="conflict">' + esc(conflictText(r, cf)) + "</span>" : "") + "</td>" +
         '<td class="nowrap num">' + (c.phone ? '<button class="lk" data-act="phone"><span>' + esc(C.formatPhone(c.phone)) + "</span></button>" : "") + "</td>" +
-        "<td>" + (c.address ? '<button class="lk" data-act="addr"><span>' + esc(c.address) + "</span></button>" : "") + "</td>" +
+        '<td><div class="c-links">' + addrLinks(r) + photoBtn(r) + "</div></td>" +
         "<td>" + esc(C.itemsSummary(r.items)) + '<span class="sub">' + esc(C.modelsSummary(r.items)) + "</span></td>" +
         "<td>" + esc(C.worksSummary(r.items)) + "</td>" +
         '<td class="r nowrap num"><b data-testid="card-amt">' + C.formatWon(r.total) + "원</b></td>" +
@@ -584,6 +611,18 @@
       '<div class="row"><button class="btn" data-act="staff-add" data-testid="staff-add">+ 직원 추가</button>' +
       '<button class="btn primary" data-act="staff-save" data-testid="staff-save" style="margin-left:auto"' + (canWrite() ? "" : " disabled") + ">명단 저장</button></div></div>";
 
+    if (S.assets && S.isOwner) {
+      html += '<div class="section-title">사진 저장 공간</div><div class="panel" id="usage" data-testid="usage">' + (S.usageText || "확인 중…") + "</div>";
+      if (!S.usageAt || Date.now() - S.usageAt > 60000) {
+        S.usageAt = Date.now();
+        S.assets.list().then(function (l) {
+          var u = l.usage || {}, mb = function (b) { return (b / 1048576).toFixed(1) + "MB"; };
+          S.usageText = "사진 " + (u.files || 0) + "장 · " + mb(u.bytes || 0) + (u.maxBytes ? " / " + mb(u.maxBytes) + " 사용" : "");
+          var el = $("#usage"); if (el) el.textContent = S.usageText;
+        }).catch(function () { var el = $("#usage"); if (el) el.textContent = "확인하지 못했어요."; });
+      }
+    }
+
     html += '<div class="section-title">앱 정보</div><div class="panel about" data-testid="about"><img src="assets/logo.webp" alt="세탁기 크루 로고">' +
       '<div><div class="t">세탁기 <b>크루</b></div><div class="muted">세척·이전설치 예약과 월별 매출 장부</div>' +
       '<div style="margin-top:6px;font-weight:600">개발 · 신창민</div></div></div>';
@@ -701,6 +740,8 @@
       if (a === "paid" && r) return quickPaid(r);
       if (a === "phone" && r) return phoneSheet(r);
       if (a === "addr" && r) return addrSheet(r);
+      if (a === "addr2" && r) return addrSheet(r, true);
+      if (a === "photos" && r) return openPhotos(r.id);
       if (a === "csv") return exportCsv(false);
       if (a === "csv-year") return exportCsv(true);
       if (a === "toggle-table") { S.statsTable = !S.statsTable; renderBody(); return; }
@@ -764,8 +805,13 @@
       function (e) { if (e.target.closest("[data-copy]")) copyText(num, "번호를 복사했어요."); });
   }
 
-  function addrSheet(r) {
+  function addrSheet(r, dest) {
     var c = r.customer || {}, site = r.site || {};
+    if (dest) {
+      var to = r.moveTo || {};
+      c = { name: c.name, address: to.address };
+      site = { floor: to.floor, elevator: to.elevator };
+    }
     var extra = [site.floor ? site.floor + "층" : "", site.elevator ? "엘리베이터 " + site.elevator : "", site.parking ? "주차 " + site.parking : ""].filter(Boolean).join(" · ");
     var links = C.navLinks(c.address, C.detectPlatform(navigator.userAgent));
     var mine = myNavApp();
@@ -776,7 +822,7 @@
         (l.copyFirst ? " data-navcopy" : "") + ' data-testid="nav-' + l.key + '">' + esc(l.label) +
         (main ? (l.copyFirst ? " 열기 (주소 자동 복사)" : " 길찾기") : "") + "</a>";
     };
-    var html = "<h2>" + esc(c.name || "고객") + " 주소</h2>" +
+    var html = "<h2>" + esc(c.name || "고객") + (C.isMove(r) ? (dest ? " 도착지 (설치하는 곳)" : " 출발지 (철거하는 곳)") : " 주소") + "</h2>" +
       '<div class="sel-text">' + esc(c.address) + "</div>" +
       (extra || site.memo ? "<p>" + esc(extra) + (site.memo ? "<br>" + esc(site.memo) : "") + "</p>" : "");
     if (apps.length) {
@@ -832,6 +878,7 @@
     return {
       date: d, time: "09:00", durationMin: 60, status: "scheduled",
       customer: { name: "", phone: "", address: "" }, site: { floor: "", elevator: "", parking: "", memo: "" },
+      moveTo: { address: "", floor: "", elevator: "" },
       items: [{ type: "통돌이", model: "", qty: 1, work: "세척" }],
       total: 0, payment: { method: "미정", paid: false }, needed: 2, workers: workers, note: ""
     };
@@ -845,6 +892,7 @@
     delete data.id;
     data.customer = Object.assign({ name: "", phone: "", address: "" }, data.customer);
     data.site = Object.assign({ floor: "", elevator: "", parking: "", memo: "" }, data.site);
+    data.moveTo = Object.assign({ address: "", floor: "", elevator: "" }, data.moveTo);
     data.payment = Object.assign({ method: "미정", paid: false }, data.payment);
     data.workers = data.workers || {};
     if (!Array.isArray(data.items) || !data.items.length) data.items = [{ type: "통돌이", model: "", qty: 1, work: "세척" }];
@@ -892,7 +940,12 @@
         '<div class="f"><label for="f-phone">전화번호</label><input class="inp num" type="tel" inputmode="tel" id="f-phone" value="' + esc(c.phone) + '" placeholder="010-0000-0000" autocomplete="off" data-testid="f-phone">' + (e.phone ? '<span class="err">' + e.phone + "</span>" : "") + '<div id="hist"></div></div>' +
         '<div class="f"><label for="f-name">고객 이름</label><input class="inp" id="f-name" value="' + esc(c.name) + '" placeholder="예: 김민지" autocomplete="off" data-testid="f-name"></div>' +
         (e.customer ? '<span class="err">' + e.customer + "</span>" : "") +
-        '<div class="f"><label for="f-addr">주소</label><input class="inp" id="f-addr" value="' + esc(c.address) + '" placeholder="예: 수원시 영통구 ○○아파트 101동 1203호" autocomplete="off" data-testid="f-addr"></div>' +
+        '<div class="f"><label for="f-addr" id="addrLabel">주소</label><input class="inp" id="f-addr" value="' + esc(c.address) + '" placeholder="예: 수원시 영통구 ○○아파트 101동 1203호" autocomplete="off" data-testid="f-addr"></div>' +
+        '<div class="move" id="moveBlock" hidden data-testid="move-block">' +
+          '<div class="f"><label for="f-addr2">도착지 주소 (설치하는 곳)</label><input class="inp" id="f-addr2" value="' + esc(d.moveTo.address) + '" placeholder="예: 용인시 기흥구 ○○아파트 105동 701호" autocomplete="off" data-testid="f-addr2"></div>' +
+          '<div class="f2"><div class="f"><label for="f-floor2">도착지 층수</label><input class="inp" id="f-floor2" inputmode="numeric" value="' + esc(d.moveTo.floor) + '" placeholder="예: 7"></div>' +
+          '<div class="f"><span class="lab">도착지 엘리베이터</span>' + chipGroup("elevator2", ["있음", "없음"], d.moveTo.elevator) + "</div></div>" +
+        "</div>" +
       "</div>" +
 
       '<div class="fs"><h3>기기 · 작업</h3><div id="items" style="display:grid;gap:8px">' + d.items.map(itemHtml).join("") + "</div>" +
@@ -913,6 +966,7 @@
       "</div>" +
 
       '<div class="fs"><h3>상태</h3>' + chipGroup("status", ["scheduled", "done", "canceled"], d.status, ["예약", "완료", "취소"]) + "</div>" +
+      '<div class="fs"><h3>작업 사진</h3><div id="photoLine"></div></div>' +
 
       '<details class="fs"' + (site.floor || site.elevator || site.parking || site.memo ? " open" : "") + '><summary>현장 정보 (층수·엘리베이터·주차)</summary>' +
         '<div class="f2"><div class="f"><label for="f-floor">층수</label><input class="inp" id="f-floor" inputmode="numeric" value="' + esc(site.floor) + '" placeholder="예: 12"></div>' +
@@ -965,6 +1019,8 @@
     d.customer.phone = C.formatPhone(g("f-phone").trim());
     d.customer.name = g("f-name").trim();
     d.customer.address = g("f-addr").trim();
+    d.moveTo.address = g("f-addr2").trim();
+    d.moveTo.floor = g("f-floor2").trim();
     d.total = C.parseWon(g("f-total"));
     var paid = $("#f-paid"); d.payment.paid = !!(paid && paid.checked);
     d.site.floor = g("f-floor").trim();
@@ -984,6 +1040,19 @@
   function refreshFormLive() {
     if (!F || !$("#endInfo")) return;
     var d = F.data;
+    // 이전설치가 있으면 출발지/도착지
+    var mv = C.isMove(d);
+    $("#moveBlock").hidden = !mv;
+    $("#addrLabel").textContent = mv ? "출발지 주소 (철거하는 곳)" : "주소";
+    var pl = $("#photoLine");
+    if (pl) {
+      var cur = F.id && S.all[F.id];
+      if (cur) {
+        var pc = C.photoCounts(cur);
+        pl.innerHTML = '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span class="num">작업 전 ' + pc.before + "장 · 작업 후 " + pc.after + "장</span>" +
+          '<button type="button" class="btn" data-photos data-testid="form-photos">사진 보기·추가</button></div>';
+      } else pl.innerHTML = '<span class="muted">예약을 저장한 뒤 카드의 [사진 추가]로 올릴 수 있어요.</span>';
+    }
     var end = C.endTime(d.time, d.durationMin);
     $("#endInfo").innerHTML = end ? "끝나는 시간 <b class=\"num\" data-testid=\"end-time\">" + esc(end) + "</b> (" + C.durationLabel(d.durationMin) + ")" : "";
     var warn = "";
@@ -1039,6 +1108,7 @@
       if (t.closest("[data-del]")) { F.confirmDel = true; renderFoot(); return; }
       if (t.closest("[data-delno]")) { F.confirmDel = false; renderFoot(); return; }
       if (t.closest("[data-delyes]")) return del();
+      if (t.closest("[data-photos]") && F.id) return openPhotos(F.id);
       if (t.closest("[data-addi]")) {
         readForm();
         var lastType = F.data.items.length ? F.data.items[F.data.items.length - 1].work : "세척";
@@ -1086,8 +1156,9 @@
         else if (k === "needed") F.data.needed = +v;
         else if (k === "status") F.data.status = v;
         else if (k === "elevator" || k === "parking") F.data.site[k] = F.data.site[k] === v ? "" : v;
+        else if (k === "elevator2") F.data.moveTo.elevator = F.data.moveTo.elevator === v ? "" : v;
         chip.parentNode.querySelectorAll("[data-f]").forEach(function (b) {
-          var val = k === "elevator" || k === "parking" ? F.data.site[k] : k === "method" ? F.data.payment.method : F.data[k];
+          var val = k === "elevator" || k === "parking" ? F.data.site[k] : k === "elevator2" ? F.data.moveTo.elevator : k === "method" ? F.data.payment.method : F.data[k];
           b.setAttribute("aria-pressed", String(String(val) === b.getAttribute("data-v")));
         });
         refreshFormLive();
@@ -1109,6 +1180,7 @@
 
   function rerenderItems() {
     $("#items").innerHTML = F.data.items.map(itemHtml).join("");
+    refreshFormLive();
   }
 
   var saving = false;
@@ -1138,6 +1210,7 @@
       customer: { name: d.customer.name, phone: d.customer.phone, address: d.customer.address },
       phoneDigits: C.normalizePhone(d.customer.phone),
       site: { floor: d.site.floor, elevator: d.site.elevator, parking: d.site.parking, memo: d.site.memo },
+      moveTo: { address: d.moveTo.address, floor: d.moveTo.floor, elevator: d.moveTo.elevator },
       items: d.items, total: C.parseWon(d.total),
       payment: { method: d.payment.method, paid: !!d.payment.paid },
       needed: +d.needed || 2, note: d.note,
@@ -1172,11 +1245,160 @@
   }
 
   async function del() {
+    var photos = C.photoList(S.all[F.id] || F.orig || {});
     try {
       await S.db.doc("reservations/" + F.id).delete();
       closeForm();
       toast("예약을 삭제했어요.");
-    } catch (e) { toast(writeError(e)); }
+    } catch (e) { toast(writeError(e)); return; }
+    // 예약에 딸린 사진도 정리(다른 직원이 올린 사진은 권한상 남을 수 있음)
+    if (S.assets) for (var i = 0; i < photos.length; i++) { try { await S.assets.delete(photos[i].id); } catch (e) { /* 무시 */ } }
+  }
+
+  // ---------------- 작업 사진 ----------------
+  var KIND = { before: "작업 전", after: "작업 후" };
+  function openPhotos(id) {
+    if (!S.all[id]) return;
+    P = { id: id, view: null, confirmDel: false, busy: null };
+    renderPhotos();
+  }
+
+  function renderPhotos() {
+    if (!P) return;
+    var r = S.all[P.id];
+    var m = $("#modal");
+    if (!r) { closeModal(); toast("예약이 삭제되어 사진 창을 닫았어요."); return; }
+    var canUp = !!(S.assets && canWrite());
+    var all = C.photoList(r);
+    var html;
+    if (P.view) {
+      var i = all.map(function (p) { return p.id; }).indexOf(P.view);
+      if (i < 0) { P.view = null; return renderPhotos(); }
+      var ph = all[i], same = C.photoList(r, ph.kind), k = same.map(function (p) { return p.id; }).indexOf(ph.id);
+      html = '<div class="pv-top"><button class="btn" data-pback>목록으로</button><b>' + KIND[ph.kind] + " " + (k + 1) + "/" + same.length + "</b></div>" +
+        '<div class="pv-img"><img src="/_blob/' + esc(ph.id) + '" alt="' + KIND[ph.kind] + ' 사진" data-testid="photo-big"></div>' +
+        '<p class="muted pv-meta">' + esc(staffName(ph.by) || "") + " " + esc(fmtStamp(ph.at)) + "에 올림</p>" +
+        '<div class="pv-nav"><button class="btn" data-pstep="-1"' + (i > 0 ? "" : " disabled") + '>이전</button><button class="btn" data-pstep="1"' + (i < all.length - 1 ? "" : " disabled") + ">다음</button>" +
+        (canUp ? (P.confirmDel ? '<span class="pv-del"><button class="btn" data-pdelno>아니요</button><button class="btn danger solid" data-pdelyes data-testid="photo-del-yes">삭제</button></span>'
+          : '<button class="btn danger" data-pdel data-testid="photo-del">삭제</button>') : "") + "</div>";
+    } else {
+      html = "<h2>" + esc((r.customer || {}).name || "고객") + " 작업 사진</h2>";
+      if (P.busy) html += '<div class="banner info" data-testid="photo-busy">' + esc(P.busy) + "</div>";
+      ["before", "after"].forEach(function (kind) {
+        var list = C.photoList(r, kind);
+        html += '<div class="ph-sec"><div class="ph-h">' + KIND[kind] + ' <span class="num muted">' + list.length + "장</span></div>" +
+          '<div class="ph-grid" data-testid="grid-' + kind + '">' + list.map(function (p, n) {
+            return '<button class="ph" data-pv="' + esc(p.id) + '"><img src="/_blob/' + esc(p.id) + '" alt="' + KIND[kind] + " 사진 " + (n + 1) + '" loading="lazy"></button>';
+          }).join("") +
+          (canUp ? '<label class="ph add" data-testid="add-' + kind + '">' + '<input type="file" accept="image/*" multiple class="vh" data-kind="' + kind + '" data-testid="file-' + kind + '">' +
+            ICON.camera + "<span>사진 추가</span></label>" : "") + "</div></div>";
+      });
+      if (!canUp && S.conn === "ok") html += '<p class="muted" style="font-size:13px">사진을 올리려면 장부 주인에게 편집자로 초대받아야 해요.</p>';
+      html += '<button class="btn wide" data-pclose>닫기</button>';
+    }
+    var scroll = m.firstChild ? m.firstChild.scrollTop : 0;
+    openModal(html, onPhotoClick);
+    m.firstChild.classList.add("photo-modal");
+    if (!P.view) m.firstChild.scrollTop = scroll;
+    m.onchange = function (e) {
+      var inp = e.target;
+      if (inp && inp.matches("input[type=file][data-kind]") && inp.files && inp.files.length) uploadPhotos(Array.prototype.slice.call(inp.files), inp.getAttribute("data-kind"));
+    };
+  }
+
+  function onPhotoClick(e) {
+    var t = e.target;
+    if (t.closest("[data-pclose]")) { closeModal(); return; }
+    var v = t.closest("[data-pv]");
+    if (v) { P.view = v.getAttribute("data-pv"); P.confirmDel = false; renderPhotos(); return; }
+    if (t.closest("[data-pback]")) { P.view = null; P.confirmDel = false; renderPhotos(); return; }
+    var st = t.closest("[data-pstep]");
+    if (st && !st.disabled) {
+      var all = C.photoList(S.all[P.id]).map(function (p) { return p.id; });
+      var i = all.indexOf(P.view) + +st.getAttribute("data-pstep");
+      if (all[i]) { P.view = all[i]; P.confirmDel = false; renderPhotos(); }
+      return;
+    }
+    if (t.closest("[data-pdel]")) { P.confirmDel = true; renderPhotos(); return; }
+    if (t.closest("[data-pdelno]")) { P.confirmDel = false; renderPhotos(); return; }
+    if (t.closest("[data-pdelyes]")) { deletePhoto(P.id, P.view); return; }
+  }
+
+  // 긴 변 1600px JPEG로 줄여 데이터·저장 공간을 아낌
+  function loadImage(file) {
+    if (window.createImageBitmap) {
+      return createImageBitmap(file, { imageOrientation: "from-image" }).catch(function () { return createImageBitmap(file); });
+    }
+    return new Promise(function (res, rej) {
+      var url = URL.createObjectURL(file), img = new Image();
+      img.onload = function () { URL.revokeObjectURL(url); res(img); };
+      img.onerror = function () { URL.revokeObjectURL(url); rej(new Error("decode")); };
+      img.src = url;
+    });
+  }
+  async function compressImage(file) {
+    var MAX = 1600;
+    try {
+      var img = await loadImage(file);
+      var w0 = img.width || img.naturalWidth, h0 = img.height || img.naturalHeight;
+      var sc = Math.min(1, MAX / Math.max(w0, h0));
+      var w = Math.max(1, Math.round(w0 * sc)), h = Math.max(1, Math.round(h0 * sc));
+      var cv = document.createElement("canvas");
+      cv.width = w; cv.height = h;
+      var cx = cv.getContext("2d");
+      cx.fillStyle = "#ffffff"; cx.fillRect(0, 0, w, h);
+      cx.drawImage(img, 0, 0, w, h);
+      if (img.close) img.close();
+      var blob = await new Promise(function (res) { cv.toBlob(res, "image/jpeg", 0.82); });
+      if (blob && blob.size) return blob;
+    } catch (e) { /* 원본 시도 */ }
+    if (/^image\/(jpeg|png|webp)$/.test(file.type) && file.size <= 20 * 1024 * 1024) return file;
+    throw { code: "unsupported_type" };
+  }
+
+  function photoError(e) {
+    var code = e && e.code;
+    if (code === "unsupported_type") return "이 사진 형식은 올릴 수 없어요. 일반 사진(JPG)으로 다시 골라 주세요.";
+    if (code === "too_large") return "사진이 너무 커요. 다른 사진을 골라 주세요.";
+    if (code === "quota_or_state") return "사진 저장 공간이 가득 찼어요. 오래된 사진을 지워 주세요.";
+    if (code === "rate_limited") return "잠시 뒤 다시 올려 주세요.";
+    if (code === "not_granted" || code === "capability_disabled" || code === "capability_removed") return "이 화면에서는 사진을 올릴 수 없어요.";
+    if (code === "invalid_argument") return writeError(e);
+    return "사진을 올리지 못했어요. 인터넷 연결을 확인하고 다시 올려 주세요.";
+  }
+
+  async function uploadPhotos(files, kind) {
+    if (!P || !S.assets) return;
+    var id = P.id, ok = 0, err = null;
+    for (var i = 0; i < files.length; i++) {
+      if (P && P.id === id) { P.busy = "사진 올리는 중 " + (i + 1) + "/" + files.length + " (화면을 닫지 마세요)"; renderPhotos(); }
+      try {
+        var blob = await compressImage(files[i]);
+        var res = await S.assets.upload(blob, { type: blob.type || "image/jpeg" });
+        var patch = { photos: {} };
+        patch.photos[res.id] = { kind: kind, by: S.myStaffId || "", at: nowIso() };
+        await S.db.doc("reservations/" + id).update(patch);
+        ok++;
+      } catch (e) { err = e; }
+    }
+    if (P && P.id === id) { P.busy = null; renderPhotos(); }
+    if (err) toast((ok ? ok + "장은 올렸어요. " : "") + photoError(err));
+    else toast(KIND[kind] + " 사진 " + ok + "장을 올렸어요.");
+  }
+
+  async function deletePhoto(rid, pid) {
+    try {
+      await S.assets.delete(pid);
+    } catch (e) {
+      P.confirmDel = false; renderPhotos();
+      toast(e && e.code === "not_uploader" ? "다른 직원이 올린 사진은 올린 사람이나 사장님만 지울 수 있어요." : "사진을 지우지 못했어요. 다시 눌러 주세요.");
+      return;
+    }
+    var patch = { photos: {} };
+    patch.photos[pid] = null;
+    try { await S.db.doc("reservations/" + rid).update(patch); } catch (e) { /* 파일은 지워짐, 목록은 다음 수정 때 정리 */ }
+    if (P) { P.view = null; P.confirmDel = false; renderPhotos(); }
+    toast("사진을 지웠어요.");
   }
 
   function debounce(fn, ms) { var t; return function () { clearTimeout(t); t = setTimeout(fn, ms); }; }

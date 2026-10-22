@@ -15,6 +15,8 @@ claude.ai 공유 페이지(Artifact)로 동작하며, 데이터는 Artifact의 �
 - 월별 통계: 건수, 완료·예정 매출, 미수금, 기기별 대수, 작업별 건수, 직원별 참여, 12개월 그래프, CSV(엑셀) 내보내기
 - 전화번호로 고객 이전 작업 이력 불러오기, 현장 정보(층수·엘리베이터·주차)
 - 주소 → 티맵 / 카카오내비 / 카카오맵 / 네이버지도 열기(휴대폰마다 "내 내비 앱" 선택)
+- 이전설치: 작업에 '이전설치'가 있으면 출발지(철거하는 곳)와 도착지(설치하는 곳) 주소·층수·엘리베이터 입력, 카드에 출발/도착 표시
+- 작업 사진: 예약별 작업 전/후 사진 업로드(긴 변 1600px JPEG로 자동 압축), 직원 간 실시간 공유, 크게 보기, 본인 사진 삭제
 
 ## 파일
 | 파일 | 내용 |
@@ -26,7 +28,8 @@ claude.ai 공유 페이지(Artifact)로 동작하며, 데이터는 Artifact의 �
 | `test/` | 단위 테스트, 브라우저 E2E 테스트, 가짜 claude 런타임 |
 
 ## 데이터 구조 (Artifact db)
-- `reservations/{id}`: 예약 1건 (`date`, `time`, `durationMin`, `status`, `customer`, `phoneDigits`, `site`, `items[]`, `total`, `payment`, `needed`, `workers{직원id: true}`, `note`, `createdBy/At`, `updatedBy/At`)
+- `reservations/{id}`: 예약 1건 (`date`, `time`, `durationMin`, `status`, `customer`, `phoneDigits`, `site`, `moveTo{address, floor, elevator}`, `items[]`, `total`, `payment`, `needed`, `workers{직원id: true}`, `photos{assetId: {kind: before|after, by, at} | null}`, `note`, `createdBy/At`, `updatedBy/At`)
+- 사진 파일: Artifact `assets` 저장소, 화면에서는 `/_blob/<assetId>`로 표시
 - `config/staff`: 직원 명단 `{ list: [{ id, name }] }`
 - `data/users/{계정id}/me`: 계정별 "내 이름"(본인만 읽음)
 
@@ -39,4 +42,4 @@ E2E 테스트는 `PLAYWRIGHT_PATH`로 playwright 모듈 위치를, 스크린샷 
 
 ## 수정·배포
 Artifact 편집자 권한이 있는 사람이 Claude 대화에 배포 주소를 주고 수정을 요청하면, 같은 주소로 다시 게시됩니다.
-게시할 때 `core.js`, `app.js`, `assets/*`를 함께 올리고 capabilities는 `{ db: {}, user: {}, downloads: true }`입니다.
+게시할 때 `core.js`, `app.js`, `assets/*`를 함께 올리고 capabilities는 `{ db: {}, user: {}, downloads: true, assets: {} }`입니다.

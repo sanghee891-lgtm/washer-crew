@@ -289,6 +289,29 @@ a.btn { color: var(--ink); text-decoration: none; display: inline-flex; align-it
 .nav-more { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 .nav-more .btn.wide { min-height: 46px; font-size: 14px; padding: 0 6px; white-space: normal; line-height: 1.25; text-align: center; }
 .nav-web { display: flex; gap: 16px; justify-content: center; }
+/* 작업 사진 */
+.vh { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; clip: rect(0 0 0 0); }
+.modal-in.photo-modal { max-width: 640px; }
+.ph-sec { display: grid; gap: 8px; }
+.ph-h { font-weight: 700; font-size: 15px; }
+.ph-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.ph { aspect-ratio: 1; max-width: 100%; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: var(--surface-2); padding: 0; position: relative; display: block; }
+.ph img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ph img.broken { opacity: 0; }
+.ph.add { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border: 1.5px dashed var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 13px; cursor: pointer; }
+.ph.add svg { width: 26px; height: 26px; }
+.pv-top { display: flex; align-items: center; gap: 12px; }
+.pv-img { background: #0b1220; border-radius: 12px; overflow: hidden; display: grid; place-items: center; min-height: 200px; }
+.pv-img img { max-width: 100%; max-height: 62vh; display: block; }
+.pv-meta { margin: 0; font-size: 13px; }
+.pv-nav { display: flex; gap: 8px; flex-wrap: wrap; }
+.pv-nav .btn { min-height: 46px; flex: 1; }
+.pv-del { display: flex; gap: 8px; flex: 2; }
+/* 이전설치 출발/도착 */
+.lk em { font-style: normal; font-size: 12px; font-weight: 700; padding: 1px 6px; border-radius: 5px; flex: none; }
+.lk .tag-from { background: var(--surface); color: var(--ink-2); border: 1px solid var(--line); }
+.lk .tag-to { background: var(--accent); color: var(--accent-ink); }
+.move { display: grid; gap: 10px; padding: 10px; border-radius: 10px; background: var(--accent-soft); }
 .sel-text { user-select: all; font-size: 18px; font-weight: 700; background: var(--surface-2); border-radius: 10px; padding: 10px 12px; word-break: break-all; }
 .toast { position: fixed; z-index: 60; left: 50%; bottom: calc(var(--tabs-h) + env(safe-area-inset-bottom, 0px) + 84px); transform: translateX(-50%);
   background: var(--ink); color: var(--bg); padding: 10px 14px; border-radius: 12px; font-weight: 600; display: flex; gap: 12px; align-items: center; max-width: calc(100% - 32px); box-shadow: var(--shadow); }

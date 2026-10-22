@@ -15,8 +15,24 @@ function skeleton(body) {
     "<style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui}img{max-width:100%}[hidden]{display:none!important}</style></head><body>" +
     body + "</body></html>";
 }
+const blobs = new Map(); // 가짜 asset 저장소 (/_blob/<id>)
 const server = http.createServer((req, res) => {
   const u = req.url.split("?")[0];
+  if (u === "/__blobcount") { res.writeHead(200); return res.end(String(blobs.size)); }
+  if (u.startsWith("/_blob/")) {
+    const id = u.slice(7);
+    if (req.method === "PUT") {
+      const chunks = [];
+      req.on("data", (c) => chunks.push(c));
+      req.on("end", () => { blobs.set(id, { type: req.headers["content-type"], buf: Buffer.concat(chunks) }); res.writeHead(200); res.end(); });
+      return;
+    }
+    if (req.method === "DELETE") { blobs.delete(id); res.writeHead(200); return res.end(); }
+    const b = blobs.get(id);
+    if (!b) { res.writeHead(404); return res.end(); }
+    res.writeHead(200, { "content-type": b.type });
+    return res.end(b.buf);
+  }
   if (u === "/" || u === "/index.html") {
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     return res.end(skeleton(fs.readFileSync(path.join(ROOT, "index.html"), "utf8")));
@@ -476,6 +492,141 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
     eq(await p.getAttribute("[data-testid=web-kakaomap]", "href"), "https://map.kakao.com/link/search/" + NAV_ENC);
     await c.close();
   });
+
+  // ---------------- 작업 사진 · 이전설치 ----------------
+  console.log("작업 사진 · 이전설치");
+  {
+    const ctxP = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true });
+    const owner = await newPage(ctxP, { uid: "u_owner", owner: true }, errors);
+    await owner.goto(BASE);
+    await owner.evaluate(() => {
+      localStorage.clear();
+      localStorage.setItem("mockdb", JSON.stringify({
+        "config/staff": { list: [{ id: "s1", name: "김철수" }, { id: "s2", name: "이영희" }] },
+        "reservations/rp": { date: new Date().toISOString().slice(0, 10), time: "13:00", durationMin: 120, status: "scheduled", customer: { name: "사진고객", phone: "01033334444", address: "수원시 영통구 1" }, site: {}, items: [{ type: "통돌이", qty: 1, work: "세척" }], total: 80000, payment: { method: "미정", paid: false }, workers: { s1: true } }
+      }));
+      localStorage.setItem("wb.staffId.u_owner", "s1");
+      localStorage.setItem("wb.staffId.u_lee", "s2");
+      localStorage.setItem("wb.staffId.u_view", "s2");
+    });
+    await owner.reload();
+    await owner.waitForSelector("[data-testid=card]");
+    const mkPng = (w, h, color) => owner.evaluate(([w, h, color]) => {
+      const c = document.createElement("canvas"); c.width = w; c.height = h;
+      const x = c.getContext("2d"); x.fillStyle = color; x.fillRect(0, 0, w, h); x.fillStyle = "#fff"; x.fillRect(w / 4, h / 4, w / 2, h / 2);
+      return c.toDataURL("image/png").split(",")[1];
+    }, [w, h, color]).then((b64) => Buffer.from(b64, "base64"));
+    const big = await mkPng(3000, 2000, "#0693f8");
+    const small1 = await mkPng(800, 600, "#00419b");
+    const small2 = await mkPng(600, 800, "#17784a");
+    const imgsLoaded = (p, sel) => p.waitForFunction((sel) => { const xs = [...document.querySelectorAll(sel)]; return xs.length && xs.every((i) => i.complete && i.naturalWidth > 0); }, sel);
+
+    await step("사진 추가: 큰 사진은 1600px JPEG로 줄여서 올림", async () => {
+      ok((await txt(owner, "[data-testid=photos-btn]")).includes("사진 추가"));
+      await owner.click("[data-testid=photos-btn]");
+      await owner.setInputFiles("[data-testid=file-before]", { name: "before.png", mimeType: "image/png", buffer: big });
+      await owner.waitForFunction(() => document.querySelectorAll("[data-testid=grid-before] img").length === 1);
+      await imgsLoaded(owner, "[data-testid=grid-before] img");
+      await owner.click("[data-testid=grid-before] .ph");
+      await imgsLoaded(owner, "[data-testid=photo-big]");
+      const dim = await owner.evaluate(() => { const i = document.querySelector("[data-testid=photo-big]"); return [i.naturalWidth, i.naturalHeight]; });
+      eq(dim.join("x"), "1600x1067", "줄인 크기");
+      const type = await owner.evaluate(() => fetch(document.querySelector("[data-testid=photo-big]").src).then((r) => r.headers.get("content-type")));
+      eq(type, "image/jpeg");
+      ok((await txt(owner, "#modal")).includes("김철수"), "올린 사람 표시");
+      await owner.click("[data-pback]");
+    });
+    await step("작업 후 사진 2장 한 번에 → 카드에 '사진 3'", async () => {
+      await owner.setInputFiles("[data-testid=file-after]", [
+        { name: "a1.png", mimeType: "image/png", buffer: small1 }, { name: "a2.png", mimeType: "image/png", buffer: small2 }]);
+      await owner.waitForFunction(() => document.querySelectorAll("[data-testid=grid-after] img").length === 2);
+      await imgsLoaded(owner, "[data-testid=grid-after] img");
+      await noHScroll(owner);
+      await owner.screenshot({ path: path.join(SHOTS, "m-photos.png") });
+      await owner.click("[data-pclose]");
+      await owner.waitForFunction(() => document.querySelector("[data-testid=photos-btn]").textContent.includes("사진 3"));
+    });
+    const staff = await newPage(ctxP, { uid: "u_lee" }, errors);
+    await staff.goto(BASE);
+    await step("다른 직원 화면에도 사진이 보이고, 남의 사진은 못 지움", async () => {
+      await staff.waitForFunction(() => (document.querySelector("[data-testid=photos-btn]") || {}).textContent === "사진 3");
+      await staff.click("[data-testid=photos-btn]");
+      await imgsLoaded(staff, "#modal .ph img");
+      await staff.click("[data-testid=grid-before] .ph");
+      await staff.click("[data-testid=photo-del]");
+      await staff.click("[data-testid=photo-del-yes]");
+      await staff.waitForFunction(() => document.querySelector("#toast").textContent.includes("올린 사람이나 사장님만"));
+      await staff.click("[data-pback]");
+      eq(await staff.locator("[data-testid=grid-before] img").count(), 1, "사진 남아 있음");
+    });
+    await step("직원이 올린 사진: 사장님 화면에 실시간 반영, 본인은 삭제 가능", async () => {
+      await staff.setInputFiles("[data-testid=file-after]", { name: "s.png", mimeType: "image/png", buffer: small1 });
+      await staff.waitForFunction(() => document.querySelectorAll("[data-testid=grid-after] img").length === 3);
+      await owner.waitForFunction(() => document.querySelector("[data-testid=photos-btn]").textContent.includes("사진 4"));
+      await staff.click("[data-testid=grid-after] .ph >> nth=2");
+      await staff.click("[data-testid=photo-del]");
+      await staff.click("[data-testid=photo-del-yes]");
+      await staff.waitForFunction(() => document.querySelectorAll("[data-testid=grid-after] img").length === 2);
+      await owner.waitForFunction(() => document.querySelector("[data-testid=photos-btn]").textContent.includes("사진 3"));
+      await staff.click("[data-pclose]");
+    });
+    await step("보기 전용은 사진 보기만(추가 버튼 없음)", async () => {
+      const v = await newPage(ctxP, { uid: "u_view", readOnly: true }, errors);
+      await v.goto(BASE);
+      await v.waitForSelector("[data-testid=photos-btn]");
+      await v.click("[data-testid=photos-btn]");
+      await imgsLoaded(v, "#modal .ph img");
+      eq(await v.locator("[data-testid=add-before]").count(), 0);
+      await v.close();
+    });
+    await step("폼에 사진 수 표시, 사장님 저장 공간 표시", async () => {
+      await owner.click("[data-testid=card] .c-name");
+      ok((await txt(owner, "#photoLine")).includes("작업 전 1장 · 작업 후 2장"));
+      await owner.click("#sheet [data-x] >> nth=0");
+      await owner.click("[data-testid=tab-settings]");
+      await owner.waitForFunction(() => /사진 3장/.test(document.querySelector("[data-testid=usage]").textContent));
+      await owner.click("[data-testid=tab-list]");
+    });
+    await step("이전설치 선택 시 출발지·도착지 입력 → 카드·내비에 반영", async () => {
+      await owner.click("[data-testid=card] .c-name");
+      ok(await owner.isHidden("[data-testid=move-block]"), "세척만일 땐 숨김");
+      eq(await txt(owner, "#addrLabel"), "주소");
+      await owner.selectOption("[data-testid=item] >> nth=0 >> [data-testid=item-work]", "이전설치");
+      await owner.waitForSelector("[data-testid=move-block]", { state: "visible" });
+      eq(await txt(owner, "#addrLabel"), "출발지 주소 (철거하는 곳)");
+      await owner.fill("[data-testid=f-addr2]", "용인시 기흥구 2, 105동 701호");
+      await owner.fill("#f-floor2", "7");
+      await owner.click("button[data-f=elevator2][data-v='있음']");
+      await owner.click("[data-testid=save]");
+      await owner.waitForSelector("[data-testid=addr-to]");
+      ok((await txt(owner, "[data-testid=addr-from]")).includes("수원시 영통구 1"));
+      ok((await txt(owner, "[data-testid=addr-to]")).includes("용인시 기흥구 2"));
+      await owner.click("[data-testid=addr-to]");
+      ok((await txt(owner, "#modal h2")).includes("도착지"));
+      ok((await txt(owner, "#modal")).includes("7층 · 엘리베이터 있음"));
+      eq(await owner.getAttribute("[data-testid=web-kakaomap]", "href"), "https://map.kakao.com/link/search/" + encodeURIComponent("용인시 기흥구 2, 105동 701호"));
+      await owner.click("#modal", { position: { x: 10, y: 10 } });
+      await owner.screenshot({ path: path.join(SHOTS, "m-move.png") });
+      // 다시 열면 값 유지, 세척으로 바꾸면 도착지 숨김
+      await owner.click("[data-testid=card] .c-name");
+      eq(await owner.inputValue("[data-testid=f-addr2]"), "용인시 기흥구 2, 105동 701호");
+      await owner.selectOption("[data-testid=item] >> nth=0 >> [data-testid=item-work]", "세척");
+      ok(await owner.isHidden("[data-testid=move-block]"));
+      await owner.click("#sheet [data-x] >> nth=0");
+    });
+    await step("예약 삭제 시 사진 파일도 정리", async () => {
+      const before = +(await (await fetch(BASE + "__blobcount")).text());
+      eq(before, 3, "삭제 전 파일 수");
+      await owner.click("[data-testid=card] .c-name");
+      await owner.click("[data-testid=del]");
+      await owner.click("[data-testid=del-yes]");
+      await owner.waitForSelector("[data-testid=empty]");
+      await owner.waitForFunction(() => true);
+      for (let i = 0; i < 20 && +(await (await fetch(BASE + "__blobcount")).text()) > 0; i++) await owner.waitForTimeout(100);
+      eq(+(await (await fetch(BASE + "__blobcount")).text()), 0, "삭제 후 파일 수");
+    });
+    await ctxP.close();
+  }
 
   await step("콘솔·스크립트 오류 0건", async () => { eq(errors.length, 0, errors.join("\n")); });
 
