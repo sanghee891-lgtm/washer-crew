@@ -518,10 +518,14 @@
   function openAccount() {
     var name = staffName(S.fixedStaff) || "";
     openModal("<h2>" + esc(name) + "님</h2><p>이 기기에 로그인되어 있어요." + (S.isOwner ? " (개발자)" : "") + "</p>" +
+      '<button class="btn wide" data-switch data-testid="switch-user">다른 사용자로 전환</button>' +
+      (S.user.lockNow ? '<button class="btn wide" data-locknow data-testid="lock-now">지금 잠그기</button>' : "") +
       '<button class="btn wide" data-mypin>내 비밀번호 바꾸기</button>' +
       '<button class="btn wide danger" data-logout data-testid="logout">로그아웃</button>',
       function (e) {
         if (e.target.closest("[data-mypin]")) { myPin(); return; }
+        if (e.target.closest("[data-switch]")) { S.user.switchUser(); return; }
+        if (e.target.closest("[data-locknow]")) { closeModal(); S.user.lockNow(); return; }
         if (e.target.closest("[data-logout]")) S.user.signOut();
       });
   }
@@ -1097,7 +1101,11 @@
     if (!staffDraft) staffDraft = S.staff.map(function (p) { return { id: p.id, name: p.name }; });
     var html = S.fixedStaff
       ? '<div class="section-title" style="margin-top:4px">내 계정</div><div class="panel" data-testid="my-account"><p style="margin:0 0 8px"><b>' + esc(staffName(S.fixedStaff)) + "님</b>으로 로그인했어요" + (S.isOwner ? " (개발자)" : "") + ".</p>" +
-        '<div class="chips"><button class="btn" data-act="my-pin">비밀번호 바꾸기</button><button class="btn danger" data-act="logout">로그아웃</button></div></div>'
+        '<div class="chips"><button class="btn" data-act="switch-user">다른 사용자로 전환</button><button class="btn" data-act="my-pin">비밀번호 바꾸기</button><button class="btn danger" data-act="logout">로그아웃</button></div></div>' +
+        (S.user.lockMinutes ? '<div class="section-title">이 기기 자동 잠금</div><div class="panel" data-testid="lock-panel"><div class="chips">' +
+          [[0, "사용 안 함"], [10, "10분"], [30, "30분"], [120, "2시간"]].map(function (o) {
+            return '<button class="chip" data-lockmin="' + o[0] + '" aria-pressed="' + (S.user.lockMinutes() === o[0]) + '" data-testid="lock-' + o[0] + '">' + o[1] + "</button>";
+          }).join("") + '</div><p class="muted" style="margin:8px 0 0;font-size:13px">여러 사람이 같이 쓰는 휴대폰·태블릿이면 켜 두세요. 정한 시간 동안 쓰지 않으면 잠기고, 비밀번호 6자리를 다시 넣어야 열려요. 개인 휴대폰은 "사용 안 함"이면 돼요.</p></div>' : "")
       : '<div class="section-title" style="margin-top:4px">내 이름</div><div class="panel">' +
       (S.staff.length ? '<div class="chips">' + S.staff.map(function (p) {
         return '<button class="chip" data-pick="' + esc(p.id) + '" aria-pressed="' + (p.id === S.myStaffId) + '">' + esc(p.name) + "</button>";
@@ -1269,6 +1277,13 @@
     if (op) { var orr = S.all[op.getAttribute("data-open")]; if (orr) { if (C.ymOf(orr.date) !== S.ym) setMonth(C.ymOf(orr.date)); openForm(orr.id); } return; }
     var pick = t.closest("[data-pick]");
     if (pick) { setMe(pick.getAttribute("data-pick")); return; }
+    var lm = t.closest("[data-lockmin]");
+    if (lm && S.user && S.user.setLockMinutes) {
+      S.user.setLockMinutes(+lm.getAttribute("data-lockmin"));
+      renderBody();
+      toast(+lm.getAttribute("data-lockmin") ? "이 기기는 " + lm.textContent + " 동안 안 쓰면 잠겨요." : "자동 잠금을 껐어요.");
+      return;
+    }
     var np = t.closest("[data-navpref]");
     if (np) {
       store("navApp", np.getAttribute("data-navpref"));
@@ -1307,6 +1322,7 @@
       if (a === "push-test") { S.push.test().then(function () { toast("시험 알림을 보냈어요. 잠시 뒤 휴대폰을 확인하세요."); }, function () { toast("보내지 못했어요. 다시 눌러 주세요."); }); return; }
       if (a === "my-pin") return myPin();
       if (a === "logout") return S.user.signOut();
+      if (a === "switch-user") return S.user.switchUser();
       if (a === "copy-book") return copyText(new URL("book.html", location.href).href, "예약 링크를 복사했어요.");
       if (a === "acct-pin") return acctPin(act.getAttribute("data-sid"));
       if (a === "acct-rm") return acctRemove(act.getAttribute("data-sid"));

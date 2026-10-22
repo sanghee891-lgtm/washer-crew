@@ -445,6 +445,14 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
   const bc = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const bp = watch(await bc.newPage(), "book");
   await bp.goto(BASE + "book.html");
+  await step("개인정보 처리 안내 링크 → 보관 기간·삭제 요청 방법", async () => {
+    eq(await bp.getAttribute("[data-testid=b-privacy]", "href"), "privacy.html");
+    const pp = watch(await bc.newPage(), "privacy");
+    await pp.goto(BASE + "privacy.html");
+    const t = await pp.innerText("body");
+    for (const w of ["보관 기간", "30일", "1년", "삭제 요청"]) ok(t.includes(w), w);
+    await pp.close();
+  });
   await step("빈 칸·기기 미선택·동의 없음이면 안내만", async () => {
     await bp.click("[data-testid=b-send]");
     ok(await bp.isVisible("#e-items"), "기기");
@@ -526,6 +534,32 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     ok(!(await kp.isVisible("[data-testid=pin-input]")), "사장님은 안내 없음");
   });
   await kc.close();
+
+  // ---------------- 자동 잠금·사용자 전환 ----------------
+  console.log("자동 잠금·사용자 전환");
+  await step("이 기기 자동 잠금 10분 → 오래 안 쓰면 잠금 화면, 비밀번호 넣으면 다시 열림", async () => {
+    await p.click("[data-testid=tab-settings]");
+    await p.click("[data-testid=lock-10]");
+    eq(await p.getAttribute("[data-testid=lock-10]", "aria-pressed"), "true");
+    // 앱을 11분 동안 안 쓰다가 다시 화면을 켠 상황
+    await p.evaluate(() => { localStorage.setItem("wc.lastActive", JSON.stringify(Date.now() - 11 * 60000)); document.dispatchEvent(new Event("visibilitychange")); });
+    await p.waitForSelector("[data-testid=lock-msg]");
+    await p.waitForFunction(() => document.querySelector("#login").innerText.includes("신창민님"));
+    ok(!(await p.isVisible("#app")), "장부 가려짐");
+    for (const d of "333333") await p.click(`.pin-pad [data-key="${d}"]`);
+    await p.waitForSelector("#login", { state: "detached" });
+    await p.waitForSelector("[data-testid=lock-panel]");
+    await p.click("[data-testid=lock-0]");
+  });
+  await step("내 이름 → 다른 사용자로 전환하면 사용자 고르는 화면", async () => {
+    const t = await webPage(p.context(), { session: "u-park", label: "switch" });
+    await t.waitForSelector("[data-testid=me-chip]");
+    await t.click("[data-testid=me-chip]");
+    await t.click("[data-testid=switch-user]");
+    await t.waitForSelector(".login-row");
+    eq(await t.evaluate(() => sessionStorage.getItem("fakesb.session")), null);
+    await t.close();
+  });
 
   // ---------------- 8. PWA·로그아웃 ----------------
   console.log("PWA·로그아웃");

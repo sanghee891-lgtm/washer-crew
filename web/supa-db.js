@@ -48,21 +48,65 @@
     var s = (await sb.auth.getSession()).data.session;
     if (s) {
       var acc = await loadAccount(s);
-      if (acc) { ACC = acc; afterLogin(); return; }
+      if (acc) {
+        ACC = acc;
+        if (lockDue()) { showLock(); return; } // 공용 기기: 오래 안 썼으면 잠금부터
+        afterLogin(); return;
+      }
       await sb.auth.signOut().catch(function () {});
     }
     showLogin();
   }
 
+  var started = false;
   function afterLogin() {
     var box = $("#login");
     if (box) box.remove();
     document.documentElement.classList.remove("need-login");
+    touchActive(true);
+    if (started) return; // 잠금 해제
+    started = true;
     readyResolve();
     resaveSubscription();
   }
 
-  var LOGIN = { names: null, pick: null, pin: "", busy: false, msg: "" };
+  // ---------------- 자동 잠금(기기마다 선택, 기본은 사용 안 함) ----------------
+  function lockMin() { return +(local("lockMin") || 0); }
+  var lastTouch = 0;
+  function touchActive(force) {
+    var now = Date.now();
+    if (!force && now - lastTouch < 15000) return;
+    lastTouch = now;
+    local("lastActive", now);
+  }
+  function lockDue() {
+    var m = lockMin(), last = +(local("lastActive") || 0);
+    return m > 0 && last > 0 && Date.now() - last > m * 60000;
+  }
+  function showLock() {
+    LOGIN.lock = true; LOGIN.pick = ACC.staffId; LOGIN.pin = ""; LOGIN.msg = "";
+    showLogin();
+  }
+  function checkLock() { if (ACC && !LOGIN.lock && !$("#login") && lockDue()) showLock(); }
+  ["pointerdown", "keydown"].forEach(function (ev) { document.addEventListener(ev, function () { if (ACC && !$("#login")) touchActive(); }, true); });
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible") checkLock(); else if (ACC && !$("#login")) touchActive(true);
+  });
+  setInterval(checkLock, 30000);
+
+  // 그만둔 직원(계정 삭제·로그인 막기)은 다음에 화면을 켤 때 바로 로그아웃
+  async function checkStillStaff() {
+    if (!ACC) return;
+    var r = await sb.from("staff_accounts").select("uid").eq("uid", ACC.uid).maybeSingle();
+    if (!r.error && !r.data) {
+      try { localStorage.removeItem("wc.account"); } catch (e) { /* 무시 */ }
+      await sb.auth.signOut().catch(function () {});
+      alert("사용이 중지된 계정이에요. 사장님께 문의해 주세요.");
+      location.replace(location.pathname);
+    }
+  }
+
+  var LOGIN = { names: null, pick: null, pin: "", busy: false, msg: "", lock: false };
   var DEFAULT_PIN = "000000";
   async function showLogin() {
     document.documentElement.classList.add("need-login");
@@ -112,7 +156,8 @@
       }).join("") + "</div>";
     } else {
       var who = (LOGIN.names || []).filter(function (p) { return p.id === LOGIN.pick; })[0] || {};
-      html += '<div class="login-card"><button class="login-back" data-back>' + SVG.back + "다른 사용자 선택</button>" +
+      html += '<div class="login-card"><button class="login-back" data-back data-testid="login-back">' + SVG.back + (LOGIN.lock ? "다른 사용자로 로그인" : "다른 사용자 선택") + "</button>" +
+        (LOGIN.lock ? '<p class="login-lockmsg" data-testid="lock-msg">한동안 쓰지 않아 잠겼어요.</p>' : "") +
         '<div class="login-who">' + avatar(who, true) + "<b>" + esc(who.name) + "님</b><small>" + (who.is_owner ? ROLE.owner : ROLE.staff) + "</small></div>" +
         '<p class="login-ask">비밀번호 숫자 6자리를 누르세요.</p>' +
         '<div class="pin-dots" aria-label="입력한 자리 수 ' + LOGIN.pin.length + '">' +
@@ -134,7 +179,10 @@
     var n = t.closest("[data-name]");
     if (n) { LOGIN.pick = n.getAttribute("data-name"); LOGIN.pin = ""; LOGIN.msg = ""; renderLogin(); return; }
     if (t.closest("[data-retry]")) { LOGIN.names = null; LOGIN.msg = ""; showLogin(); return; }
-    if (t.closest("[data-back]")) { LOGIN.pick = null; LOGIN.pin = ""; LOGIN.msg = ""; renderLogin(); return; }
+    if (t.closest("[data-back]")) {
+      if (LOGIN.lock) { switchUser(); return; }
+      LOGIN.pick = null; LOGIN.pin = ""; LOGIN.msg = ""; renderLogin(); return;
+    }
     if (t.closest("[data-del]")) { LOGIN.pin = LOGIN.pin.slice(0, -1); renderLogin(); return; }
     var k = t.closest("[data-key]");
     if (k) typeKey(k.getAttribute("data-key"));
@@ -151,6 +199,7 @@
     if (acc) {
       // 처음 번호(000000)로 들어온 직원은 장부에서 비밀번호 바꾸기 안내(사장님 제외)
       if (LOGIN.pin === DEFAULT_PIN && !acc.isOwner) local("defaultPin", acc.uid);
+      LOGIN.lock = false; LOGIN.pin = "";
       ACC = acc; afterLogin(); return;
     }
     LOGIN.pin = "";
@@ -192,7 +241,7 @@
       .subscribe(function (status) { if (status === "SUBSCRIBED") refreshAll(); });
   }
   // 휴대폰을 껐다 켜거나 인터넷이 다시 연결되면 최신으로
-  document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible" && ACC) refreshAll(); });
+  document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible" && ACC) { refreshAll(); checkStillStaff(); } });
   window.addEventListener("online", function () { if (ACC) refreshAll(); });
   setInterval(function () { if (ACC && document.visibilityState === "visible") refreshAll(); }, 90000);
 
@@ -335,6 +384,10 @@
     can: async function (n) { return n === "data.write"; },
     me: async function () { return { id: ACC && ACC.uid, name: "", email: null, isOwner: !!(ACC && ACC.isOwner), canEdit: true, avatarUrl: "", color: "#888" }; },
     profiles: async function (ids) { var o = {}; [].concat(ids).forEach(function (i) { o[i] = { id: i, name: "", avatarUrl: "", color: "#888", email: null, isMe: ACC && i === ACC.uid, guest: false }; }); return o; },
+    lockMinutes: function () { return lockMin(); },
+    setLockMinutes: function (m) { local("lockMin", +m || 0); touchActive(true); },
+    lockNow: function () { if (ACC) showLock(); },
+    switchUser: function () { return switchUser(); },
     signOut: async function () {
       await disablePushQuietly();
       await sb.auth.signOut().catch(function () {});
@@ -536,6 +589,9 @@
     accept: function (id, reservationId) { return handleBooking(id, { status: "accepted", reservation_id: reservationId }); },
     reject: function (id) { return handleBooking(id, { status: "rejected" }); }
   };
+
+  // 다른 사용자로: 로그아웃하고 사용자 고르는 화면으로(이 기기 알림 구독도 풀어 다른 사람에게 가지 않게)
+  async function switchUser() { return user.signOut(); }
 
   var caps = { db: db, user: user, downloads: downloads, assets: assets, push: push, bookings: bookings };
   window.claude = {
