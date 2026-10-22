@@ -43,6 +43,12 @@
   function list() { return Object.keys(S.all).map(function (k) { return S.all[k]; }); }
   function monthList() { return C.sortReservations(C.filterMonth(list(), S.ym)); }
   function canWrite() { return S.conn === "ok" && !S.readOnly; }
+  // 예약 수정·삭제·입금확인은 예약을 넣은 사람과 사장님(장부 주인)만
+  function canEditRes(r) {
+    if (!canWrite()) return false;
+    if (S.isOwner) return true;
+    return !!(r && r.createdBy && S.myStaffId && r.createdBy === S.myStaffId);
+  }
   function fmtStamp(iso) {
     if (!iso) return "";
     var d = new Date(iso);
@@ -167,6 +173,7 @@
       try { if ((await S.user.can("data.write")) === false) S.readOnly = true; } catch (e) { /* 모름 → 쓰기 시도 */ }
       try { S.isOwner = await S.user.isOwner(); } catch (e) { S.isOwner = false; }
     }
+    loadSeen();
     S.db.doc("config/staff").onSnapshot(function (snap) {
       var d = snap.exists ? snap.data() : null;
       S.staff = (d && Array.isArray(d.list)) ? d.list.filter(function (p) { return p && p.id && p.name; }) : [];
@@ -199,7 +206,10 @@
       .onSnapshot(function (snap) {
         var next = {};
         snap.docs.forEach(function (d) { next[d.id] = Object.assign({}, d.data(), { id: d.id }); });
+        var prev = S.all;
         S.all = next;
+        if (!S.loading) announceNew(prev, next);
+        if (S.loading && NOTE.at) NOTE.ready = true;
         S.loading = false;
         render();
         if (F) refreshFormLive();
@@ -245,6 +255,41 @@
     }
     toast((staffName(id) || "") + "님으로 설정했어요.");
     render();
+  }
+
+  // ---------------- 새 예약 알림 ----------------
+  // 기기마다 '마지막으로 확인한 시각'을 기억해, 그 뒤에 다른 사람이 넣은 예약을 새 예약으로 표시
+  var NOTE = { at: null, ids: {}, ready: false };
+  function noteKey() { return "seen." + (S.uid || "local"); }
+  function loadSeen() {
+    var v = null;
+    try { v = JSON.parse(store(noteKey()) || "null"); } catch (e) { v = null; }
+    if (v && v.at) { NOTE.at = v.at; NOTE.ids = v.ids || {}; }
+    else { NOTE.at = nowIso(); NOTE.ids = {}; saveSeen(); } // 처음 연 기기는 지난 예약을 새 예약으로 쏟아내지 않음
+  }
+  function saveSeen() { store(noteKey(), JSON.stringify({ at: NOTE.at, ids: NOTE.ids })); }
+  function isNew(r) {
+    if (!NOTE.at || !r || !r.createdAt) return false;
+    if (r.createdBy && r.createdBy === S.myStaffId) return false;
+    return r.createdAt > NOTE.at && !NOTE.ids[r.id];
+  }
+  function newList() { return C.sortReservations(list().filter(isNew)); }
+  function markSeen(id) { if (NOTE.at && !NOTE.ids[id]) { NOTE.ids[id] = true; saveSeen(); render(); } }
+  function markAllSeen() { NOTE.at = nowIso(); NOTE.ids = {}; saveSeen(); }
+  function noteLine(r) {
+    var c = r.customer || {};
+    return C.dayLabel(r.date) + " " + r.time + " · " + (c.name || C.itemsSummary(r.items) || "") +
+      (staffName(r.createdBy) ? " · " + staffName(r.createdBy) + "님 등록" : "");
+  }
+  // 장부를 열어 둔 동안 다른 직원이 예약을 넣으면 바로 알림
+  function announceNew(prev, next) {
+    if (!NOTE.ready) return;
+    var fresh = Object.keys(next).filter(function (id) { return !prev[id] && isNew(next[id]); });
+    if (!fresh.length) return;
+    var r = next[fresh[0]];
+    try { if (navigator.vibrate) navigator.vibrate(200); } catch (e) { /* 지원 안 함 */ }
+    toast((fresh.length > 1 ? "새 예약 " + fresh.length + "건 · " : "새 예약 · ") + noteLine(r),
+      { label: "보기", run: function () { if (C.ymOf(r.date) !== S.ym) setMonth(C.ymOf(r.date)); openForm(r.id); } });
   }
 
   // ---------------- 렌더 ----------------
@@ -297,8 +342,15 @@
     var b = $("#banner");
     if (!b) return;
     var msg = "";
-    if (S.conn === "nodb") msg = '<div class="banner">공유 장부에 연결되지 않았어요. claude.ai에 로그인한 뒤 장부 주인에게 받은 링크로 열어 주세요.</div>';
-    else if (S.readOnly) msg = '<div class="banner">보기 전용이에요. 예약을 넣거나 고치려면 장부 주인에게 \'편집자\'로 초대해 달라고 요청하세요.</div>';
+    var nl = S.conn === "ok" ? newList() : [];
+    if (nl.length) {
+      msg += '<div class="notice" data-testid="new-notice"><div class="notice-h"><b>새 예약 ' + nl.length + "건</b>" +
+        '<button class="btn" data-act="seen-all" data-testid="seen-all">모두 확인</button></div>' +
+        nl.slice(0, 5).map(function (r) { return '<button class="notice-row" data-open="' + esc(r.id) + '">' + esc(noteLine(r)) + "</button>"; }).join("") +
+        (nl.length > 5 ? '<div class="muted" style="font-size:13px">외 ' + (nl.length - 5) + "건</div>" : "") + "</div>";
+    }
+    if (S.conn === "nodb") msg += '<div class="banner">공유 장부에 연결되지 않았어요. claude.ai에 로그인한 뒤 장부 주인에게 받은 링크로 열어 주세요.</div>';
+    else if (S.readOnly) msg += '<div class="banner">보기 전용이에요. 예약을 넣거나 고치려면 장부 주인에게 \'편집자\'로 초대해 달라고 요청하세요.</div>';
     b.innerHTML = msg;
   }
 
@@ -374,12 +426,32 @@
     }).join("");
   }
 
+  // 참여(true) / 불참("no") / 보류("maybe") — 카톡 일정처럼 각자 응답
+  var RSVP = { yes: "참여", no: "불참", maybe: "보류" };
+  function rsvpOf(r, id) {
+    var v = ((r && r.workers) || {})[id];
+    return v === true ? "yes" : v === "no" ? "no" : v === "maybe" ? "maybe" : "";
+  }
+  function rsvpIds(r, kind) {
+    return S.staff.map(function (p) { return p.id; }).filter(function (id) { return rsvpOf(r, id) === kind; });
+  }
   function crewHtml(r) {
     var ids = crew(r);
     var need = r.needed || 2;
-    return ids.map(function (id) {
-      return '<span class="who' + (id === S.myStaffId ? " me" : "") + '">' + esc(staffName(id)) + "</span>";
-    }).join("") + '<span class="need num' + (ids.length < need && r.status === "scheduled" ? " short" : "") + '">' + ids.length + "/" + need + "명</span>";
+    var chip = function (id, kind) {
+      return '<span class="who' + (kind !== "yes" ? " " + kind : "") + (id === S.myStaffId ? " me" : "") + '">' + esc(staffName(id)) + (kind !== "yes" ? " " + RSVP[kind] : "") + "</span>";
+    };
+    return ids.map(function (id) { return chip(id, "yes"); }).join("") +
+      rsvpIds(r, "maybe").map(function (id) { return chip(id, "maybe"); }).join("") +
+      rsvpIds(r, "no").map(function (id) { return chip(id, "no"); }).join("") +
+      '<span class="need num' + (ids.length < need && r.status === "scheduled" ? " short" : "") + '">' + ids.length + "/" + need + "명</span>";
+  }
+  function rsvpHtml(r) {
+    if (!canWrite() || r.status !== "scheduled") return "";
+    var mine = rsvpOf(r, S.myStaffId);
+    return '<div class="c-rsvp" role="group" aria-label="내 참여 여부">' + ["yes", "no", "maybe"].map(function (k) {
+      return '<button class="rs rs-' + k + '" data-act="rsvp" data-v="' + k + '" aria-pressed="' + (mine === k) + '" data-testid="rsvp-' + k + '">' + RSVP[k] + "</button>";
+    }).join("") + "</div>";
   }
 
   function conflictText(r, cf) {
@@ -393,14 +465,8 @@
   function cardHtml(r, cf) {
     var c = r.customer || {};
     var p = r.payment || {};
-    var mine = S.myStaffId && r.workers && r.workers[S.myStaffId] === true;
     var today = C.todayStr();
-    var acts = "";
-    if (canWrite() && r.status !== "canceled") {
-      if (r.status === "scheduled") acts += '<button class="btn' + (mine ? "" : " primary") + '" data-act="join" data-testid="join">' + (mine ? "참여취소" : "참여하기") + "</button>";
-      if (r.status === "scheduled" && r.date <= today) acts += '<button class="btn good" data-act="done" data-testid="quick-done">완료</button>';
-      if (r.status === "done" && !C.isPaid(r)) acts += '<button class="btn good" data-act="paid" data-testid="quick-paid">입금확인</button>';
-    }
+    var acts = quickActs(r, today);
     var pay = "";
     if (r.status !== "canceled") {
       var paid = C.isPaid(r);
@@ -411,7 +477,7 @@
     return '<article class="card st-' + esc(r.status) + '" data-id="' + esc(r.id) + '" data-testid="card" tabindex="0">' +
       '<div class="c-time num"><b>' + esc(r.time) + "</b><span>~" + esc(C.endTime(r.time, r.durationMin).replace(" (다음날)", "+1")) + '</span><span class="dur">' + C.durationLabel(r.durationMin) + "</span></div>" +
       '<div class="c-main">' +
-        '<div class="c-r1"><span class="c-name">' + esc(c.name || C.formatPhone(c.phone) || "이름 없음") + '</span><span class="pill ' + esc(r.status) + '">' + (C.STATUS[r.status] || "") + '</span><span class="c-amt num" data-testid="card-amt">' + C.formatWon(r.total) + "원</span></div>" +
+        '<div class="c-r1"><span class="c-name">' + esc(c.name || C.formatPhone(c.phone) || "이름 없음") + "</span>" + (isNew(r) ? '<span class="pill new" data-testid="new-badge">NEW</span>' : "") + '<span class="pill ' + esc(r.status) + '">' + (C.STATUS[r.status] || "") + '</span><span class="c-amt num" data-testid="card-amt">' + C.formatWon(r.total) + "원</span></div>" +
         '<div class="c-items">' + esc(C.itemsSummary(r.items)) + ' <span class="w">' + esc(C.worksSummary(r.items)) + (models ? " · " + esc(models) : "") + "</span></div>" +
         '<div class="c-links">' +
           (c.phone ? '<button class="lk" data-act="phone">' + ICON.phone + '<span class="num">' + esc(C.formatPhone(c.phone)) + "</span></button>" : "") +
@@ -419,7 +485,7 @@
         "</div>" +
         (pay ? '<div class="c-pay">' + pay + "</div>" : "") +
         (cf ? '<div class="c-warn" data-testid="conflict">' + esc(conflictText(r, cf)) + "</div>" : "") +
-        '<div class="c-crew">' + crewHtml(r) + '<span class="c-act">' + acts + "</span></div>" +
+        '<div class="c-crew">' + crewHtml(r) + '<span class="c-act">' + acts + "</span></div>" + rsvpHtml(r) +
       "</div></article>";
   }
 
@@ -438,6 +504,15 @@
     return '<button class="lk" data-act="photos" data-testid="photos-btn">' + ICON.camera + '<span class="num">' + (n ? "사진 " + n : "사진 추가") + "</span></button>";
   }
 
+  // 완료는 누구나, 입금확인은 예약을 넣은 사람·사장님만
+  function quickActs(r, today) {
+    var acts = "";
+    if (!canWrite() || r.status === "canceled") return acts;
+    if (r.status === "scheduled" && r.date <= today) acts += '<button class="btn good" data-act="done" data-testid="quick-done">완료</button>';
+    if (r.status === "done" && !C.isPaid(r) && canEditRes(r)) acts += '<button class="btn good" data-act="paid" data-testid="quick-paid">입금확인</button>';
+    return acts;
+  }
+
   function tableHtml(rows, conflicts) {
     var today = C.todayStr();
     var out = '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>시간</th><th>고객</th><th>전화번호</th><th>주소</th><th>기기 · 모델</th><th>작업</th><th class="r">금액</th><th>결제</th><th>상태</th><th>참여 직원</th><th></th></tr></thead><tbody>';
@@ -449,12 +524,8 @@
         out += '<tr class="dayrow"><td colspan="11">' + C.dayLabel(r.date) + (r.date === today ? " · 오늘" : "") + ' <span class="muted num">' + s.count + "건 · " + C.formatWon(s.totalRevenue) + "원</span></td></tr>";
       }
       var c = r.customer || {}, p = r.payment || {};
-      var mine = S.myStaffId && r.workers && r.workers[S.myStaffId] === true;
       var cf = conflicts[r.id];
-      var acts = "";
-      if (canWrite() && r.status === "scheduled") acts += '<button class="btn' + (mine ? "" : " primary") + '" data-act="join" data-testid="join">' + (mine ? "참여취소" : "참여") + "</button> ";
-      if (canWrite() && r.status === "scheduled" && r.date <= today) acts += '<button class="btn good" data-act="done" data-testid="quick-done">완료</button>';
-      if (canWrite() && r.status === "done" && !C.isPaid(r)) acts += '<button class="btn good" data-act="paid" data-testid="quick-paid">입금확인</button>';
+      var acts = rsvpHtml(r) + quickActs(r, today);
       out += '<tr class="row st-' + esc(r.status) + '" data-id="' + esc(r.id) + '" data-testid="card">' +
         '<td class="nowrap num"><b>' + esc(r.time) + "</b>~" + esc(C.endTime(r.time, r.durationMin)) + '<span class="sub">' + C.durationLabel(r.durationMin) + "</span></td>" +
         "<td><b>" + esc(c.name || "") + "</b>" + (cf ? '<span class="sub" style="color:var(--bad)" data-testid="conflict">' + esc(conflictText(r, cf)) + "</span>" : "") + "</td>" +
@@ -782,6 +853,8 @@
     if (f) { S.filter = f.getAttribute("data-filter"); if (S.filter === "today" && S.ym !== C.ymOf(C.todayStr())) setMonth(C.ymOf(C.todayStr())); else renderBody(); return; }
     var day = t.closest("[data-day]");
     if (day) { S.calDay = day.getAttribute("data-day"); renderBody(); return; }
+    var op = t.closest("[data-open]");
+    if (op) { var orr = S.all[op.getAttribute("data-open")]; if (orr) { if (C.ymOf(orr.date) !== S.ym) setMonth(C.ymOf(orr.date)); openForm(orr.id); } return; }
     var pick = t.closest("[data-pick]");
     if (pick) { setMe(pick.getAttribute("data-pick")); return; }
     var np = t.closest("[data-navpref]");
@@ -796,13 +869,14 @@
     var r = host ? S.all[host.getAttribute("data-id")] : null;
     if (act) {
       var a = act.getAttribute("data-act");
-      if (a === "join" && r) return toggleJoin(r);
+      if (a === "rsvp" && r) return setRsvp(r, act.getAttribute("data-v"));
       if (a === "done" && r) return quickStatus(r);
-      if (a === "paid" && r) return quickPaid(r);
+      if (a === "paid" && r && canEditRes(r)) return quickPaid(r);
       if (a === "phone" && r) return phoneSheet(r);
       if (a === "addr" && r) return addrSheet(r);
       if (a === "addr2" && r) return addrSheet(r, true);
       if (a === "photos" && r) return openPhotos(r.id);
+      if (a === "seen-all") { markAllSeen(); render(); return; }
       if (a === "csv") return exportCsv(false);
       if (a === "csv-year") return exportCsv(true);
       if (a === "toggle-table") { S.statsTable = !S.statsTable; renderBody(); return; }
@@ -822,15 +896,17 @@
     return false;
   }
 
-  async function toggleJoin(r) {
-    if (!needMe(function () { toggleJoin(S.all[r.id] || r); })) return;
+  // 같은 버튼을 다시 누르면 응답 취소
+  async function setRsvp(r, kind) {
+    if (!needMe(function () { setRsvp(S.all[r.id] || r, kind); })) return;
     var me = S.myStaffId;
-    var on = !(r.workers && r.workers[me] === true);
+    var cur = rsvpOf(r, me);
+    var val = cur === kind ? false : kind === "yes" ? true : kind;
     var patch = { workers: {} };
-    patch.workers[me] = on;
+    patch.workers[me] = val;
     try {
       await S.db.doc("reservations/" + r.id).update(patch);
-      toast(on ? "참여로 표시했어요." : "참여를 취소했어요.");
+      toast(val === false ? RSVP[kind] + " 표시를 취소했어요." : RSVP[kind] + "으로 표시했어요.");
     } catch (e) { toast(writeError(e)); }
   }
 
@@ -947,8 +1023,11 @@
 
   function openForm(id, date) {
     if (!id && !canWrite()) return;
+    // 새 예약은 누가 넣는지 알아야 나중에 그 사람만 고칠 수 있음
+    if (!id && !needMe(function () { openForm(null, date); })) return;
     var r = id ? S.all[id] : null;
     if (id && !r) return;
+    if (id) markSeen(id);
     var data = r ? clone(r) : blank(date);
     delete data.id;
     data.customer = Object.assign({ name: "", phone: "", address: "" }, data.customer);
@@ -957,7 +1036,7 @@
     data.payment = Object.assign({ method: "미정", paid: false }, data.payment);
     data.workers = data.workers || {};
     if (!Array.isArray(data.items) || !data.items.length) data.items = [{ type: "통돌이", model: "", qty: 1, work: "세척" }];
-    F = { id: id, data: data, orig: r ? clone(r) : null, openedAt: r ? r.updatedAt || r.createdAt || "" : "", errors: {}, staleOk: false, confirmDel: false, hist: null, histFor: "" };
+    F = { readOnly: !!(r && !canEditRes(r)), id: id, data: data, orig: r ? clone(r) : null, openedAt: r ? r.updatedAt || r.createdAt || "" : "", errors: {}, staleOk: false, confirmDel: false, hist: null, histFor: "" };
     renderForm();
     $("#sheet").hidden = false;
     document.body.style.overflow = "hidden";
@@ -999,6 +1078,9 @@
           '<div class="endinfo" id="endInfo"></div>' + (e.durationMin ? '<span class="err">' + e.durationMin + "</span>" : "") + "</div>" +
       "</div>" +
 
+      '<div class="fs"><h3>기기 · 작업</h3><div id="items" style="display:grid;gap:8px">' + d.items.map(itemHtml).join("") + "</div>" +
+        '<button type="button" class="btn" data-addi data-testid="add-item">+ 기기 추가</button>' + (e.items ? '<span class="err">' + e.items + "</span>" : "") + "</div>" +
+
       '<div class="fs"><h3>고객</h3>' +
         '<div class="f"><label for="f-phone">전화번호</label><input class="inp num" type="tel" inputmode="tel" id="f-phone" value="' + esc(c.phone) + '" placeholder="010-0000-0000" autocomplete="off" data-testid="f-phone">' + (e.phone ? '<span class="err">' + e.phone + "</span>" : "") + '<div id="hist"></div></div>' +
         '<div class="f"><label for="f-name">고객 이름</label><input class="inp" id="f-name" value="' + esc(c.name) + '" placeholder="예: 김민지" autocomplete="off" data-testid="f-name"></div>' +
@@ -1010,9 +1092,6 @@
           '<div class="f"><span class="lab">도착지 엘리베이터</span>' + chipGroup("elevator2", ["있음", "없음"], d.moveTo.elevator) + "</div></div>" +
         "</div>" +
       "</div>" +
-
-      '<div class="fs"><h3>기기 · 작업</h3><div id="items" style="display:grid;gap:8px">' + d.items.map(itemHtml).join("") + "</div>" +
-        '<button type="button" class="btn" data-addi data-testid="add-item">+ 기기 추가</button>' + (e.items ? '<span class="err">' + e.items + "</span>" : "") + "</div>" +
 
       '<div class="fs"><h3>금액 · 결제</h3>' +
         '<div class="f"><label for="f-total">총 금액</label><div class="won-inp"><input class="inp num" id="f-total" inputmode="numeric" value="' + (d.total ? C.formatWon(d.total) : "") + '" placeholder="0" data-testid="f-total"><span>원</span></div>' + (e.total ? '<span class="err">' + e.total + "</span>" : "") + "</div>" +
@@ -1045,6 +1124,17 @@
       '<div class="sheet-f wrap" id="formFoot"></div></div>';
     var sh = $("#sheet");
     sh.innerHTML = html;
+    if (F.readOnly) {
+      // 보기만: 입력칸과 버튼을 잠그고(사진 보기 버튼은 남김) 누가 고칠 수 있는지 안내
+      sh.querySelectorAll("#form input, #form select, #form textarea, #form button").forEach(function (el) {
+        if (!el.hasAttribute("data-photos")) el.disabled = true;
+      });
+      $("#formTitle").textContent = "예약 보기";
+      var who = staffName(F.orig.createdBy);
+      $("#form").insertAdjacentHTML("afterbegin", '<div class="banner info" data-testid="readonly-note">' +
+        (who ? esc(who) + "님이 넣은 예약이에요. 수정은 " + esc(who) + "님이나 사장님만 할 수 있어요." : "이 예약은 사장님만 수정할 수 있어요.") +
+        " 참여·불참·보류와 사진은 예약 목록에서 누구나 할 수 있어요.</div>");
+    }
     renderFoot();
     refreshFormLive();
     renderHist();
@@ -1069,6 +1159,7 @@
         '<button class="btn" data-delno>아니요</button><button class="btn danger solid" data-delyes data-testid="del-yes">삭제</button>';
       return;
     }
+    if (F.readOnly) { foot.innerHTML = '<button class="btn primary grow" data-x data-testid="close-view">닫기</button>'; return; }
     foot.innerHTML = (F.id ? '<button class="btn danger" data-del data-testid="del">삭제</button>' : '<button class="btn" data-x>닫기</button>') +
       '<button class="btn primary grow" data-save data-testid="save">' + (F.id ? "수정 저장" : "예약 저장") + "</button>";
   }
@@ -1249,7 +1340,7 @@
 
   var saving = false;
   async function save() {
-    if (saving) return;
+    if (saving || F.readOnly) return;
     var d = F.data;
     d.items = C.cleanItems(d.items);
     F.errors = C.validateReservation(d);

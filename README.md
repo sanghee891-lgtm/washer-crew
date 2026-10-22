@@ -9,7 +9,9 @@ claude.ai 공유 페이지(Artifact)로 동작하며, 데이터는 Artifact의 �
 ## 기능
 - 예약 목록: 날짜·시간·소요시간·고객(전화·주소)·기기종류/모델/대수·작업·금액·결제·참여 직원을 카드(휴대폰)/표(PC)로 표시, 추가·수정·삭제
 - 기기 구분: 통돌이 / 삼성 2단 / LG 2단 / 빌트인 / 건조기 / 세탁기, 작업: 세척 / 이전설치 / 철거 / 기타
-- 직원 참여 체크(필요 인원 n/m명), 같은 직원 시간 겹침 경고, 동시 수정 경고
+- 참여 / 불참 / 보류 응답(카톡 일정처럼, 필요 인원 n/m명은 참여만 셈), 같은 직원 시간 겹침 경고, 동시 수정 경고
+- 수정 권한: 예약을 넣은 사람과 사장님(장부 주인)만 수정·삭제·입금확인, 완료·사진·참여 응답은 누구나
+- 새 예약 알림: 장부를 열어 둔 동안 즉시 알림, 나중에 열면 "새 예약 n건"과 카드 NEW 표시(기기별로 확인 시각 기억)
 - 빠른 처리: 완료, 입금확인(되돌리기 가능)
 - 달력 보기, 오늘 / 내 일정 / 인원 부족 / 미수금 필터, 올해 전체 검색
 - 월별 통계: 건수, 완료·예정 매출, 미수금, 기기별 대수, 작업별 건수, 직원별 참여, 12개월 그래프, CSV(엑셀) 내보내기
@@ -28,7 +30,7 @@ claude.ai 공유 페이지(Artifact)로 동작하며, 데이터는 Artifact의 �
 | `test/` | 단위 테스트, 브라우저 E2E 테스트, 가짜 claude 런타임 |
 
 ## 데이터 구조 (Artifact db)
-- `reservations/{id}`: 예약 1건 (`date`, `time`, `durationMin`, `status`, `customer`, `phoneDigits`, `site`, `moveTo{address, floor, elevator}`, `items[]`, `total`, `payment`, `needed`, `workers{직원id: true}`, `photos{assetId: {kind: before|after, by, at} | null}`, `note`, `createdBy/At`, `updatedBy/At`)
+- `reservations/{id}`: 예약 1건 (`date`, `time`, `durationMin`, `status`, `customer`, `phoneDigits`, `site`, `moveTo{address, floor, elevator}`, `items[]`, `total`, `payment`, `needed`, `workers{직원id: true(참여) | "maybe"(보류) | "no"(불참) | false}`, `photos{assetId: {kind: before|after, by, at} | null}`, `note`, `createdBy/At`, `updatedBy/At`)
 - 사진 파일: Artifact `assets` 저장소, 화면에서는 `/_blob/<assetId>`로 표시
 - `config/staff`: 직원 명단 `{ list: [{ id, name }] }`
 - `data/users/{계정id}/me`: 계정별 "내 이름"(본인만 읽음)

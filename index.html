@@ -158,6 +158,18 @@ main { padding-block: 12px 24px; }
 .c-crew { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; border-top: 1px dashed var(--line); padding-top: 8px; margin-top: 2px; }
 .who { font-size: 13.5px; font-weight: 600; padding: 3px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--ink); }
 .who.me { background: var(--accent); color: var(--accent-ink); }
+.who.maybe { background: var(--warn-soft); color: var(--warn); }
+.who.no { background: var(--surface-2); color: var(--ink-3); text-decoration: line-through; }
+.c-rsvp { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.rs { min-height: 40px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); font-weight: 700; font-size: 15px; color: var(--ink-2); }
+.rs-yes[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.rs-no[aria-pressed="true"] { background: var(--ink-3); border-color: var(--ink-3); color: var(--surface); }
+.rs-maybe[aria-pressed="true"] { background: var(--warn-soft); border-color: var(--warn); color: var(--warn); }
+.tbl .c-rsvp { min-width: 190px; margin-bottom: 6px; }
+.pill.new { background: var(--bad); color: #fff; }
+.notice { background: var(--surface); border: 2px solid var(--accent); border-radius: var(--r); padding: 10px 12px; margin-bottom: 12px; display: grid; gap: 6px; }
+.notice-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 16px; color: var(--accent); }
+.notice-row { text-align: left; border: 0; background: var(--accent-soft); border-radius: 8px; padding: 8px 10px; font-size: 14px; font-weight: 600; color: var(--ink); }
 .need { font-size: 13px; font-weight: 700; color: var(--ink-3); }
 .need.short { color: var(--warn); }
 .c-act { margin-left: auto; display: flex; gap: 6px; }
@@ -319,7 +331,7 @@ a.btn { color: var(--ink); text-decoration: none; display: inline-flex; align-it
 .sel-text { user-select: all; font-size: 18px; font-weight: 700; background: var(--surface-2); border-radius: 10px; padding: 10px 12px; word-break: break-all; }
 .toast { position: fixed; z-index: 60; left: 50%; bottom: calc(var(--tabs-h) + env(safe-area-inset-bottom, 0px) + 84px); transform: translateX(-50%);
   background: var(--ink); color: var(--bg); padding: 10px 14px; border-radius: 12px; font-weight: 600; display: flex; gap: 12px; align-items: center; max-width: calc(100% - 32px); box-shadow: var(--shadow); }
-.toast button { background: none; border: 0; color: var(--bar-plan); font-weight: 700; padding: 4px; }
+.toast button { background: none; border: 0; color: var(--bar-plan); font-weight: 700; padding: 4px; white-space: nowrap; flex: none; }
 
 @media (min-width: 640px) {
   .tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); }

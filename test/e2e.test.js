@@ -202,20 +202,34 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
       await p.click("[data-testid=pick-" + n + "]");
       await p.waitForSelector("[data-testid=card]");
     }
-    // 이순신(11:00, 예약 상태) 카드의 참여하기 동시 클릭
-    const sel = ".card:has(.c-name:text-is('이순신')) [data-testid=join]";
+    // 이순신(11:00, 예약 상태) 카드의 [참여] 동시 클릭
+    const card = ".card:has(.c-name:text-is('이순신'))";
+    const sel = card + " [data-testid=rsvp-yes]";
     await Promise.all([p2.click(sel), p3.click(sel)]);
     await p1.waitForFunction(() => {
       const c = [...document.querySelectorAll(".card")].find((x) => x.querySelector(".c-name").textContent === "이순신");
       return c && c.textContent.includes("이영희") && c.textContent.includes("박민수") && c.textContent.includes("3/3명");
     }, null, { timeout: 4000 });
-    // 참여 취소
+    // 같은 버튼을 다시 누르면 참여 취소
+    eq(await p2.getAttribute(sel, "aria-pressed"), "true", "내 응답 표시");
     await p2.click(sel);
     await p1.waitForFunction(() => {
       const c = [...document.querySelectorAll(".card")].find((x) => x.querySelector(".c-name").textContent === "이순신");
       return c && !c.textContent.includes("이영희") && c.textContent.includes("2/3명");
     }, null, { timeout: 4000 });
-    // 이영희 '내 일정'
+    // 보류·불참은 이름 옆에 표시되고 인원에는 안 셈
+    await p2.click(card + " [data-testid=rsvp-maybe]");
+    await p1.waitForFunction(() => {
+      const c = [...document.querySelectorAll(".card")].find((x) => x.querySelector(".c-name").textContent === "이순신");
+      return c && c.textContent.includes("이영희 보류") && c.textContent.includes("2/3명");
+    }, null, { timeout: 4000 });
+    await p2.click(card + " [data-testid=rsvp-no]");
+    await p1.waitForFunction(() => {
+      const c = [...document.querySelectorAll(".card")].find((x) => x.querySelector(".c-name").textContent === "이순신");
+      return c && c.textContent.includes("이영희 불참") && !c.textContent.includes("이영희 보류");
+    }, null, { timeout: 4000 });
+    await p1.screenshot({ path: path.join(SHOTS, "m-rsvp.png") });
+    // 박민수 '내 일정'
     await p3.click("[data-testid=filter-mine]");
     eq(await p3.locator("[data-testid=card]").count(), 1, "박민수 내 일정");
     await p2.close(); await p3.close();
@@ -352,8 +366,10 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
   await step("다른 사람이 먼저 고친 예약은 덮어쓰기 전에 경고", async () => {
     await p1.click("[data-testid=tab-list]");
     await p1.click(".card:has(.c-name:text-is('이순신')) .c-name");
-    const p2 = await newPage(ctx, { uid: "u_lee" }, errors);
+    // 다른 사람이 넣은 예약은 사장님만 고칠 수 있으므로 사장님 계정으로 동시 수정
+    const p2 = await newPage(ctx, { uid: "u_boss", owner: true }, errors);
     await p2.goto(BASE);
+    await p2.click("[data-testid=pick-이영희]");
     await p2.waitForSelector(".card:has(.c-name:text-is('이순신'))");
     await p2.click(".card:has(.c-name:text-is('이순신')) .c-name");
     await setTotal(p2, "130000");
@@ -426,7 +442,7 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
     ok((await txt(p, ".banner")).includes("보기 전용"));
     ok(!(await p.isVisible("[data-testid=add]")), "추가 버튼 숨김");
     await p.waitForSelector("[data-testid=card]");
-    eq(await p.locator("[data-testid=join]").count(), 0, "참여 버튼 숨김");
+    eq(await p.locator("[data-testid=rsvp-yes]").count(), 0, "참여 버튼 숨김");
     await c.close();
   });
   await step("공유 저장소 없음: 안내 표시, 오류 없이 동작", async () => {
@@ -825,6 +841,98 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
     eq(names.join(","), "먼저저장");
     await c.close();
   });
+
+  // ---------------- 수정 권한 · 새 예약 알림 · 입력 순서 ----------------
+  console.log("수정 권한 · 새 예약 알림");
+  {
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const kim = await newPage(c, { uid: "u_k" }, errors);
+    await kim.goto(BASE);
+    await kim.evaluate(() => {
+      localStorage.clear();
+      localStorage.setItem("mockdb", JSON.stringify({ "config/staff": { list: [{ id: "k", name: "김영우" }, { id: "j", name: "조형일" }] } }));
+      localStorage.setItem("wb.staffId.u_k", "k");
+      localStorage.setItem("wb.staffId.u_j", "j");
+      localStorage.setItem("wb.staffId.u_boss2", "k");
+    });
+    await kim.reload();
+    await kim.waitForSelector("[data-testid=empty]");
+    const jo = await newPage(c, { uid: "u_j" }, errors);
+    await jo.goto(BASE);
+    await jo.waitForSelector("[data-testid=empty]");
+
+    await step("입력 화면: 기기·작업이 고객 정보보다 위", async () => {
+      await kim.click("[data-testid=add]");
+      const order = await kim.evaluate(() => {
+        const hs = [...document.querySelectorAll("#form .fs > h3")].map((h) => h.textContent);
+        return hs.indexOf("기기 · 작업") < hs.indexOf("고객");
+      });
+      ok(order, "순서");
+      await kim.fill("[data-testid=f-name]", "알림고객");
+      await setTotal(kim, "70000");
+      await kim.click("[data-testid=save]");
+      await kim.waitForSelector("[data-testid=card]");
+    });
+    await step("장부를 열어 둔 다른 직원에게 새 예약 알림 + NEW 표시", async () => {
+      await jo.waitForFunction(() => document.querySelector("#toast") && !document.querySelector("#toast").hidden && document.querySelector("#toast").textContent.includes("새 예약"));
+      ok((await txt(jo, "#toast")).includes("김영우님 등록"), "누가 넣었는지");
+      await jo.waitForSelector("[data-testid=new-badge]");
+      ok((await txt(jo, "[data-testid=new-notice]")).includes("새 예약 1건"));
+      eq(await kim.locator("[data-testid=new-badge]").count(), 0, "내가 넣은 예약은 NEW 아님");
+      await jo.screenshot({ path: path.join(SHOTS, "m-notice.png") });
+    });
+    await step("다른 사람이 넣은 예약은 보기만(수정·삭제·입금확인 불가), 완료·참여는 가능", async () => {
+      await jo.click("[data-testid=card] .c-name");
+      await jo.waitForSelector("[data-testid=readonly-note]");
+      ok((await txt(jo, "[data-testid=readonly-note]")).includes("김영우님이 넣은 예약"));
+      eq(await jo.locator("[data-testid=save]").count(), 0, "저장 버튼 없음");
+      eq(await jo.locator("[data-testid=del]").count(), 0, "삭제 버튼 없음");
+      ok(await jo.isDisabled("[data-testid=f-name]"), "입력칸 잠김");
+      await jo.click("[data-testid=close-view]");
+      eq(await jo.locator("[data-testid=new-badge]").count(), 0, "열어 본 예약은 NEW 사라짐");
+      await jo.click("[data-testid=rsvp-yes]");
+      await kim.waitForFunction(() => document.querySelector("[data-testid=card]").textContent.includes("조형일"));
+      await jo.click("[data-testid=quick-done]");
+      await jo.waitForFunction(() => document.querySelector(".pill.done"));
+      eq(await jo.locator("[data-testid=quick-paid]").count(), 0, "입금확인은 넣은 사람·사장님만");
+      await kim.waitForSelector("[data-testid=quick-paid]");
+    });
+    await step("넣은 사람은 수정 가능, 사장님은 남이 넣은 예약도 수정 가능", async () => {
+      await kim.click("[data-testid=card] .c-name");
+      eq(await kim.locator("[data-testid=readonly-note]").count(), 0);
+      await kim.click("#sheet [data-x] >> nth=0");
+      const boss = await newPage(c, { uid: "u_boss2", owner: true }, errors);
+      await boss.goto(BASE);
+      await boss.waitForSelector("[data-testid=card]");
+      await boss.click("[data-testid=card] .c-name");
+      await boss.waitForSelector("[data-testid=save]");
+      await setTotal(boss, "80000");
+      await boss.click("[data-testid=save]");
+      await jo.waitForFunction(() => document.querySelector("[data-testid=card-amt]").textContent === "80,000원");
+      await boss.close();
+    });
+    await step("장부를 닫아 둔 사이 들어온 예약은 다시 열면 '새 예약 n건'으로 모아 보여 줌", async () => {
+      await jo.close();
+      await kim.click("[data-testid=add]");
+      await kim.fill("[data-testid=f-name]", "밤사이고객");
+      await kim.fill("[data-testid=f-time]", "15:00");
+      await kim.click("[data-testid=save]");
+      await kim.waitForFunction(() => document.querySelectorAll("[data-testid=card]").length === 2);
+      const jo2 = await newPage(c, { uid: "u_j" }, errors);
+      await jo2.goto(BASE);
+      await jo2.waitForSelector("[data-testid=new-notice]");
+      ok((await txt(jo2, "[data-testid=new-notice]")).includes("새 예약 1건"));
+      ok((await txt(jo2, "[data-testid=new-notice]")).includes("밤사이고객"));
+      await jo2.click("[data-testid=seen-all]");
+      eq(await jo2.locator("[data-testid=new-notice]").count(), 0);
+      eq(await jo2.locator("[data-testid=new-badge]").count(), 0);
+      await jo2.reload();
+      await jo2.waitForSelector("[data-testid=card]");
+      eq(await jo2.locator("[data-testid=new-notice]").count(), 0, "확인한 뒤엔 다시 안 뜸");
+      await jo2.close();
+    });
+    await c.close();
+  }
 
   await step("콘솔·스크립트 오류 0건", async () => { eq(errors.length, 0, errors.join("\n")); });
 
