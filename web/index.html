@@ -1,5 +1,18 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>세탁기 크루</title>
-<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="세탁기·건조기 세척과 이전설치 예약 및 월별 매출 장부">
+<meta name="theme-color" content="#00419B">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="세탁기 크루">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap">
@@ -51,8 +64,11 @@
 }
 
 * { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; }
+html { -webkit-text-size-adjust: 100%; padding-top: env(safe-area-inset-top, 0px); }
+[hidden] { display: none !important; }
+img { max-width: 100%; }
 body {
+  margin: 0;
   background: var(--bg); color: var(--ink); font-family: var(--font); font-size: 15px; line-height: 1.45;
   padding-bottom: calc(var(--tabs-h) + env(safe-area-inset-bottom, 0px) + 84px);
 }
@@ -355,11 +371,52 @@ a.btn { color: var(--ink); text-decoration: none; display: inline-flex; align-it
   .toast { bottom: 24px; }
   .cell { min-height: 92px; }
 }
+/* 로그인(이름 고르기 + 비밀번호 6자리) */
+.need-login #app { display: none; }
+#login { position: fixed; inset: 0; z-index: 60; background: var(--bg); overflow-y: auto; display: grid; place-items: start center; padding: calc(24px + env(safe-area-inset-top, 0px)) 16px 24px; }
+.login-in { width: 100%; max-width: 420px; display: grid; gap: 12px; text-align: center; }
+.login-in h1 { margin: 0; font-size: 26px; }
+.login-in p { margin: 0; font-size: 17px; color: var(--ink-2); }
+.login-logo { width: 120px; height: 120px; border-radius: 26px; border: 1px solid var(--line); background: #fff; justify-self: center; }
+.login-names { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.login-names .btn { min-height: 64px; font-size: 20px; }
+.login-err { color: var(--bad) !important; font-weight: 700; min-height: 1.4em; }
+.pin-dots { display: flex; justify-content: center; gap: 14px; margin: 6px 0; }
+.pin-dots i { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--accent); }
+.pin-dots i.on { background: var(--accent); }
+.pin-pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.pin-pad .btn { min-height: 64px; font-size: 26px; }
+.pin-pad [data-back], .pin-pad [data-del] { font-size: 16px; }
+.pin-inp { height: 56px; font-size: 26px; letter-spacing: .4em; text-align: center; }
+
+/* 고객 요청·확인 문자·알림 */
+.notice.req { border-color: var(--good); }
+.notice.req .notice-h { color: var(--good); }
+.notice.remind { border-color: var(--warn); }
+.notice.remind .notice-h { color: var(--warn); }
+.notice-h b { margin-right: auto; }
+.notice-line { font-size: 14px; color: var(--ink-2); }
+.req-card { border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: grid; gap: 4px; font-size: 15px; }
+.req-card.sent { background: var(--surface-2); }
+.req-h { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 17px; }
+.req-h a { color: var(--accent); font-weight: 700; }
+.req-note { white-space: pre-wrap; color: var(--ink-2); }
+.req-acts { display: flex; gap: 8px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+.req-acts .btn { min-height: 46px; font-size: 15px; display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+.req-acts .grow { flex: 1; }
+.req-card .tag-from, .req-card .tag-to { font-style: normal; font-size: 12px; font-weight: 700; padding: 1px 6px; border-radius: 5px; }
+.req-card .tag-from { border: 1px solid var(--line); color: var(--ink-2); }
+.req-card .tag-to { background: var(--accent); color: var(--accent-ink); }
+.sms-text { background: var(--accent-soft); border-radius: 10px; padding: 10px; font-size: 14.5px; }
+.acct-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.acct-row:last-of-type { border-bottom: 0; }
+.acct-row .muted { margin-right: auto; font-size: 13px; }
 @media (prefers-reduced-motion: no-preference) {
   .card, .chip, .btn, .tab { transition: background-color .12s, border-color .12s, color .12s; }
 }
 </style>
-
+</head>
+<body>
 <div id="app">
   <header class="top" id="top">
     <div class="wrap">
@@ -393,5 +450,10 @@ a.btn { color: var(--ink); text-decoration: none; display: inline-flex; align-it
 <div class="modal" id="modal" hidden></div>
 <div class="toast" id="toast" hidden></div>
 
+<script src="config.js"></script>
+<script src="vendor/supabase.js"></script>
+<script src="supa-db.js"></script>
 <script src="core.js"></script>
 <script src="app.js"></script>
+</body>
+</html>

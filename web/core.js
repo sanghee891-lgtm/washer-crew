@@ -366,6 +366,37 @@
     };
   }
 
+  // ---- 전날 확인 문자 ----
+  function addDays(date, n) {
+    var d = new Date(+date.slice(0, 4), +date.slice(5, 7) - 1, +date.slice(8, 10) + n);
+    return todayStr(d);
+  }
+  // "오전 10시", "오후 1시 30분"
+  function timeKo(time) {
+    var m = toMin(time);
+    if (isNaN(m)) return "";
+    var h = Math.floor(m / 60), mm = m % 60;
+    var h12 = h % 12 === 0 ? 12 : h % 12;
+    return (h < 12 ? "오전 " : "오후 ") + h12 + "시" + (mm ? " " + mm + "분" : "");
+  }
+  // [세탁기 크루] 김민지 고객님, 내일 10월 24일(토) 오전 10시 건조기 이전설치 예약 확인 드립니다. 변경 있으시면 연락 주세요.
+  function reminderText(r, when) {
+    var c = r.customer || {}, items = cleanItems(r.items);
+    var types = [], works = [];
+    items.forEach(function (it) {
+      if (types.indexOf(it.type) < 0) types.push(it.type);
+      if (works.indexOf(it.work) < 0) works.push(it.work);
+    });
+    var what = (types.join("·") + " " + works.join("·")).trim();
+    return "[세탁기 크루] " + (c.name ? c.name + " " : "") + "고객님, " + (when == null ? "내일 " : when ? when + " " : "") +
+      (+r.date.slice(5, 7)) + "월 " + (+r.date.slice(8, 10)) + "일(" + WEEKDAYS[weekdayOf(r.date)] + ") " +
+      timeKo(r.time) + (what ? " " + what : "") + " 예약 확인 드립니다. 변경 있으시면 연락 주세요.";
+  }
+  // 문구가 채워진 문자 화면 열기(아이폰은 &body=, 그 밖은 ?body=)
+  function smsHref(phone, body, platform) {
+    return "sms:" + normalizePhone(phone) + (platform === "ios" ? "&" : "?") + "body=" + encodeURIComponent(body);
+  }
+
   return {
     NAV_APPS: NAV_APPS, detectPlatform: detectPlatform, navLinks: navLinks,
     TYPES: TYPES, WORKS: WORKS, PAY_METHODS: PAY_METHODS, STATUS: STATUS, WEEKDAYS: WEEKDAYS,
@@ -380,6 +411,7 @@
     photoList: photoList, photoCounts: photoCounts, isMove: isMove,
     summarize: summarize, filterMonth: filterMonth, summarizeYear: summarizeYear,
     sortReservations: sortReservations, searchMatch: searchMatch,
-    validateReservation: validateReservation, toCSV: toCSV
+    validateReservation: validateReservation, toCSV: toCSV,
+    addDays: addDays, timeKo: timeKo, reminderText: reminderText, smsHref: smsHref
   };
 });

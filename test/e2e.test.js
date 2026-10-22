@@ -5,16 +5,10 @@ const path = require("path");
 const { chromium } = require(process.env.PLAYWRIGHT_PATH || "/opt/node22/lib/node_modules/playwright");
 const mockClaude = require("./mock-claude.js");
 
-const ROOT = path.join(__dirname, "..");
+const ROOT = path.join(__dirname, "..", "web");
 const SHOTS = process.env.SHOTS || path.join(__dirname, "shots");
 fs.mkdirSync(SHOTS, { recursive: true });
 
-// 게시할 때 붙는 문서 골격을 흉내 냅니다.
-function skeleton(body) {
-  return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">' +
-    "<style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui}img{max-width:100%}[hidden]{display:none!important}</style></head><body>" +
-    body + "</body></html>";
-}
 const blobs = new Map(); // 가짜 asset 저장소 (/_blob/<id>)
 const server = http.createServer((req, res) => {
   const u = req.url.split("?")[0];
@@ -41,12 +35,14 @@ const server = http.createServer((req, res) => {
   }
   if (u === "/" || u === "/index.html") {
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    return res.end(skeleton(fs.readFileSync(path.join(ROOT, "index.html"), "utf8")));
+    return res.end(fs.readFileSync(path.join(ROOT, "index.html"), "utf8"));
   }
   if (u === "/favicon.ico") { res.writeHead(204); return res.end(); }
+  // 가짜 claude 런타임으로 화면만 시험: 실제 Supabase 연결(supa-db.js)은 쓰지 않음
+  if (u === "/config.js") { res.writeHead(200, { "content-type": "text/javascript; charset=utf-8" }); return res.end("window.WC_CONFIG = null;"); }
   const f = path.join(ROOT, path.normalize(u));
   if (!f.startsWith(ROOT) || !fs.existsSync(f)) { res.writeHead(404); return res.end(); }
-  res.writeHead(200, { "content-type": f.endsWith(".js") ? "text/javascript; charset=utf-8" : f.endsWith(".webp") ? "image/webp" : "text/plain" });
+  res.writeHead(200, { "content-type": f.endsWith(".js") ? "text/javascript; charset=utf-8" : f.endsWith(".webp") ? "image/webp" : f.endsWith(".png") ? "image/png" : f.endsWith(".webmanifest") ? "application/manifest+json" : "text/plain" });
   res.end(fs.readFileSync(f));
 });
 

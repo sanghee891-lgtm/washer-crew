@@ -1,12 +1,14 @@
-/* 예약장부 화면·동작. 데이터는 claude 공유 저장소(db)의 reservations/*, config/staff 에 둡니다. */
+/* 예약장부 화면·동작. 데이터는 공유 저장소(db)의 reservations/*, config/staff, reminders/* 에 둡니다.
+   저장소는 claude.use(...) 로 받습니다(웹앱: supa-db.js 가 Supabase로 연결, 테스트: 가짜 런타임). */
 (function () {
   "use strict";
   var C = window.Core;
 
   // ---------------- 상태 ----------------
   var S = {
-    db: null, user: null, downloads: null,
-    uid: null, myStaffId: null, staff: [], staffLoaded: false,
+    db: null, user: null, downloads: null, push: null, bookings: null,
+    uid: null, myStaffId: null, fixedStaff: null, staff: [], staffLoaded: false,
+    reqs: [], sent: {}, pushState: null, accounts: null,
     all: {}, loading: true, subYear: null, unsubYear: null,
     ym: C.ymOf(C.todayStr()), tab: "list", filter: "all", q: "", calDay: null,
     readOnly: false, conn: "connecting", // connecting | ok | nodb
@@ -128,12 +130,12 @@
       if (onClick) onClick(e);
     };
   }
-  function closeModal() { var m = $("#modal"); m.hidden = true; m.innerHTML = ""; m.onchange = null; P = null; if (F) refreshFormLive(); releaseGuardSoon(); }
+  function closeModal() { var m = $("#modal"); m.hidden = true; m.innerHTML = ""; m.onchange = null; P = null; REQ.open = false; REM.open = false; if (F) refreshFormLive(); releaseGuardSoon(); }
 
   function writeError(e) {
     var code = e && e.code;
     if (code === "invalid_argument") {
-      return "저장 권한이 없어요. 장부 주인에게 '편집자'로 초대해 달라고 요청하세요.";
+      return S.fixedStaff ? "저장 권한이 없어요. 사장님께 문의해 주세요." : "저장 권한이 없어요. 장부 주인에게 '편집자'로 초대해 달라고 요청하세요.";
     }
     if (code === "quota_exceeded") return "저장 공간이 가득 찼어요. 오래된 예약을 정리해 주세요.";
     return "저장하지 못했어요. 인터넷 연결을 확인하고 다시 눌러 주세요.";
@@ -152,7 +154,7 @@
     // 불러오지 못한 사진은 빈 칸으로(권한·삭제된 파일)
     document.addEventListener("error", function (e) {
       var t = e.target;
-      if (t && t.tagName === "IMG" && /\/_blob\//.test(t.getAttribute("src") || "")) {
+      if (t && t.tagName === "IMG" && (t.hasAttribute("data-blob") || /\/_blob\//.test(t.getAttribute("src") || ""))) {
         t.classList.add("broken");
         if (t.parentNode) t.parentNode.title = "사진을 불러올 수 없어요";
       }
@@ -161,10 +163,10 @@
 
     var cl = window.claude;
     if (!cl || typeof cl.use !== "function") { S.conn = "nodb"; S.loading = false; render(); return; }
-    var got = await Promise.all([cl.use("db"), cl.use("user"), cl.use("downloads"), cl.use("assets")].map(function (p) {
+    var got = await Promise.all([cl.use("db"), cl.use("user"), cl.use("downloads"), cl.use("assets"), cl.use("push"), cl.use("bookings")].map(function (p) {
       return Promise.resolve(p).catch(function () { return null; });
     }));
-    S.db = got[0]; S.user = got[1]; S.downloads = got[2]; S.assets = got[3];
+    S.db = got[0]; S.user = got[1]; S.downloads = got[2]; S.assets = got[3]; S.push = got[4]; S.bookings = got[5];
     if (!S.db) { S.conn = "nodb"; S.loading = false; render(); return; }
     S.conn = "ok";
     if (S.user) {
@@ -172,6 +174,11 @@
       S.myStaffId = store(meKey()) || null; // 한 기기를 여러 계정이 쓰면 계정별로 따로 기억
       try { if ((await S.user.can("data.write")) === false) S.readOnly = true; } catch (e) { /* 모름 → 쓰기 시도 */ }
       try { S.isOwner = await S.user.isOwner(); } catch (e) { S.isOwner = false; }
+      // 웹앱은 로그인한 직원이 곧 '나'(이름을 따로 고르지 않음)
+      if (S.user.staffId) {
+        try { S.fixedStaff = await S.user.staffId(); } catch (e) { S.fixedStaff = null; }
+        if (S.fixedStaff) { S.myStaffId = S.fixedStaff; store(meKey(), S.fixedStaff); }
+      }
     }
     loadSeen();
     S.db.doc("config/staff").onSnapshot(function (snap) {
@@ -182,7 +189,7 @@
       render();
       maybeAskIdentity();
     }, function () { S.staffLoaded = true; render(); });
-    if (S.uid) {
+    if (S.uid && !S.fixedStaff) {
       S.db.collection("data/users/" + S.uid).doc("me").get().then(function (snap) {
         if (snap.exists && snap.data().staffId) {
           S.myStaffId = snap.data().staffId;
@@ -193,6 +200,48 @@
       }).catch(function () { /* 로컬 값 사용 */ });
     }
     subscribeYear(S.ym.slice(0, 4));
+    // 전날 확인 문자 보낸 기록(오늘 이후 예약)
+    S.db.collection("reminders").where("date", ">=", C.todayStr()).onSnapshot(function (snap) {
+      var m = {};
+      snap.docs.forEach(function (d) { m[d.id] = d.data(); });
+      S.sent = m;
+      renderBanner();
+      if (REM.open) renderReminders();
+    }, function () { /* 보조 기능 */ });
+    var reqFirst = true;
+    if (S.bookings) S.bookings.onSnapshot(function (list) {
+      var prev = S.reqs.map(function (q) { return q.id; });
+      S.reqs = list || [];
+      // 처음 불러온 목록은 위 안내로 보여 주고, 열어 둔 동안 새로 들어온 요청만 바로 알림
+      var fresh = !reqFirst && S.reqs.some(function (q) { return prev.indexOf(q.id) < 0; });
+      reqFirst = false;
+      if (fresh) toast("고객 예약 요청이 들어왔어요.", { label: "보기", run: openRequests });
+      renderBanner();
+      if (REQ.open) renderRequests();
+    });
+    if (S.push) refreshPushState();
+    if (navigator.serviceWorker) navigator.serviceWorker.addEventListener("message", function (e) {
+      if (e.data && e.data.url) handleLink(e.data.url);
+    });
+  }
+
+  // 알림·링크로 열었을 때: ?open=<예약id> | ?requests=1 | ?reminders=1
+  var linkHandled = false;
+  function handleLink(url) {
+    var q;
+    try { q = new URL(url, location.href).searchParams; } catch (e) { return; }
+    var id = q.get("open");
+    if (id && S.all[id]) { if (C.ymOf(S.all[id].date) !== S.ym) setMonth(C.ymOf(S.all[id].date)); openForm(id); }
+    else if (q.get("requests")) openRequests();
+    else if (q.get("reminders")) openReminders();
+  }
+  function handleStartLink() {
+    if (linkHandled) return;
+    linkHandled = true;
+    if (!/[?&](open|requests|reminders)=/.test(location.search)) return;
+    var url = location.href;
+    try { history.replaceState(history.state, "", location.pathname); } catch (e) { /* 무시 */ }
+    setTimeout(function () { handleLink(url); }, 0);
   }
 
   function subscribeYear(y) {
@@ -212,6 +261,7 @@
         if (S.loading && NOTE.at) NOTE.ready = true;
         S.loading = false;
         render();
+        handleStartLink();
         if (F) refreshFormLive();
         if (P) renderPhotos();
       }, function (e) {
@@ -224,7 +274,7 @@
 
   var identityAsked = false;
   function maybeAskIdentity() {
-    if (identityAsked || S.conn !== "ok" || !S.staffLoaded) return;
+    if (identityAsked || S.conn !== "ok" || !S.staffLoaded || S.fixedStaff) return;
     if (S.myStaffId && staffName(S.myStaffId)) return;
     if (!$("#sheet").hidden || !$("#modal").hidden) return;
     identityAsked = true;
@@ -233,6 +283,7 @@
   }
 
   function askIdentity(after) {
+    if (S.fixedStaff) { openAccount(); return; }
     openModal(
       "<h2>누구세요?</h2><p>이름을 고르면 '참여하기'와 '내 일정'에 이 이름이 쓰여요. 이 기기에서 한 번만 고르면 돼요.</p>" +
       '<div class="big-choices">' + S.staff.map(function (p) {
@@ -248,6 +299,7 @@
   }
 
   function setMe(id) {
+    if (S.fixedStaff) return;
     S.myStaffId = id;
     store(meKey(), id);
     if (S.db && S.uid) {
@@ -290,6 +342,227 @@
     try { if (navigator.vibrate) navigator.vibrate(200); } catch (e) { /* 지원 안 함 */ }
     toast((fresh.length > 1 ? "새 예약 " + fresh.length + "건 · " : "새 예약 · ") + noteLine(r),
       { label: "보기", run: function () { if (C.ymOf(r.date) !== S.ym) setMonth(C.ymOf(r.date)); openForm(r.id); } });
+  }
+
+
+  // ---------------- 고객 예약 요청 ----------------
+  // 고객이 예약 링크(book.html)로 넣은 요청 → [확정]하면 입력 화면이 채워진 채 열리고, 저장하면 예약이 됨
+  var REQ = { open: false, confirmRej: null };
+  function reqLine(q) {
+    return C.dayLabel(q.date) + (q.timeSlot ? " " + q.timeSlot : "") + " · " + q.name + (C.itemsSummary(q.items) ? " · " + C.itemsSummary(q.items) : "");
+  }
+  function reqNoticeHtml() {
+    if (!S.reqs.length) return "";
+    return '<div class="notice req" data-testid="req-notice"><div class="notice-h"><b>고객 예약 요청 ' + S.reqs.length + "건</b>" +
+      '<button class="btn primary" data-act="open-reqs" data-testid="open-reqs">보기</button></div>' +
+      S.reqs.slice(0, 3).map(function (q) { return '<div class="notice-line">' + esc(reqLine(q)) + "</div>"; }).join("") + "</div>";
+  }
+  function openRequests() {
+    if (!S.bookings || S.conn !== "ok") return;
+    REQ.open = true; REQ.confirmRej = null;
+    renderRequests();
+  }
+  function renderRequests() {
+    if (!REQ.open) return;
+    var html = "<h2>고객 예약 요청</h2>" + (S.reqs.length ? "" : '<p class="muted">새 요청이 없어요.</p>');
+    html += S.reqs.map(function (q) {
+      var it = C.cleanItems(q.items);
+      return '<div class="req-card" data-rq="' + esc(q.id) + '" data-testid="req-card">' +
+        '<div class="req-h"><b>' + esc(q.name) + '</b><a class="num" href="tel:' + esc(C.normalizePhone(q.phone)) + '">' + esc(C.formatPhone(q.phone)) + "</a></div>" +
+        "<div>희망 <b>" + esc(C.dayLabel(q.date)) + "</b> " + esc(q.timeSlot || "") + "</div>" +
+        (it.length ? "<div>" + esc(C.itemsSummary(it)) + " · " + esc(C.worksSummary(it)) + "</div>" : "") +
+        "<div>" + (q.moveTo ? '<em class="tag-from">출발</em> ' : "") + esc(q.address) + "</div>" +
+        (q.moveTo ? '<div><em class="tag-to">도착</em> ' + esc(q.moveTo) + "</div>" : "") +
+        (q.note ? '<div class="req-note">' + esc(q.note) + "</div>" : "") +
+        '<div class="muted" style="font-size:12px">' + esc(fmtStamp(q.createdAt)) + " 접수</div>" +
+        '<div class="req-acts">' + (REQ.confirmRej === q.id
+          ? '<span class="grow">거절할까요?</span><button class="btn" data-rqno>아니요</button><button class="btn danger solid" data-rqrejyes data-testid="req-reject-yes">거절</button>'
+          : '<button class="btn danger" data-rqrej data-testid="req-reject">거절</button><button class="btn primary grow" data-rqok data-testid="req-accept">확정 (예약 넣기)</button>') +
+        "</div></div>";
+    }).join("");
+    html += '<button class="btn wide" data-rqclose>닫기</button>';
+    var m = $("#modal"), scroll = !m.hidden && m.firstChild ? m.firstChild.scrollTop : 0;
+    openModal(html, onReqClick);
+    m.firstChild.scrollTop = scroll;
+  }
+  function onReqClick(e) {
+    var t = e.target, card = t.closest("[data-rq]"), id = card && card.getAttribute("data-rq");
+    if (t.closest("[data-rqclose]")) { closeModal(); return; }
+    if (t.closest("[data-rqrej]")) { REQ.confirmRej = id; renderRequests(); return; }
+    if (t.closest("[data-rqno]")) { REQ.confirmRej = null; renderRequests(); return; }
+    if (t.closest("[data-rqrejyes]")) {
+      REQ.confirmRej = null;
+      S.bookings.reject(id).then(function () { toast("요청을 거절했어요. 필요하면 고객에게 전화해 주세요."); }, function (err) { toast(writeError(err)); });
+      return;
+    }
+    if (t.closest("[data-rqok]")) {
+      var q = S.reqs.filter(function (x) { return x.id === id; })[0];
+      if (!q) return;
+      closeModal();
+      openForm(null, q.date, reqToForm(q));
+    }
+  }
+  function reqToForm(q) {
+    var items = C.cleanItems(q.items).map(function (it) { return { type: it.type, model: "", qty: it.qty, work: it.work }; });
+    return {
+      time: /오후/.test(q.timeSlot || "") ? "13:00" : "09:00",
+      customer: { name: q.name, phone: C.formatPhone(q.phone), address: q.address },
+      moveTo: { address: q.moveTo || "", floor: "", elevator: "" },
+      items: items.length ? items : undefined,
+      note: ["고객 예약 요청", q.timeSlot ? "희망 시간: " + q.timeSlot : "", q.note].filter(Boolean).join("\n"),
+      fromRequest: q.id
+    };
+  }
+
+  // ---------------- 내일 확인 문자 ----------------
+  // 무료: 문구가 채워진 문자 화면을 열고 직원이 전송만 누름. 보낸 고객은 reminders/<예약id> 에 기록
+  var REM = { open: false };
+  function tomorrowList() {
+    var t = C.addDays(C.todayStr(), 1);
+    return C.sortReservations(list().filter(function (r) {
+      return r.date === t && r.status === "scheduled" && C.normalizePhone((r.customer || {}).phone).length >= 9;
+    }));
+  }
+  function remindNoticeHtml() {
+    var l = tomorrowList();
+    var done = l.filter(function (r) { return S.sent[r.id]; }).length;
+    if (!l.length || done >= l.length) return "";
+    return '<div class="notice remind" data-testid="remind-notice"><div class="notice-h"><b>내일 예약 ' + l.length + "건 확인 문자</b>" +
+      (done ? '<span class="muted num">' + done + "/" + l.length + " 보냄</span>" : "") +
+      '<button class="btn primary" data-act="open-rem" data-testid="open-rem">보내기</button></div></div>';
+  }
+  function openReminders() { if (S.conn !== "ok") return; REM.open = true; renderReminders(); }
+  function renderReminders() {
+    if (!REM.open) return;
+    var l = tomorrowList(), plat = C.detectPlatform(navigator.userAgent);
+    var html = "<h2>내일 예약 확인 문자</h2><p>[문자 보내기]를 누르면 문구가 채워진 문자 화면이 열려요. 전송만 누르세요.</p>" +
+      (l.length ? "" : '<p class="muted">내일 예약이 없어요.</p>');
+    html += l.map(function (r) {
+      var c = r.customer || {}, text = C.reminderText(r), sent = S.sent[r.id];
+      return '<div class="req-card' + (sent ? " sent" : "") + '" data-rm="' + esc(r.id) + '" data-testid="rem-card">' +
+        '<div class="req-h"><b>' + esc(r.time) + " " + esc(c.name || "이름 없음") + '</b><span class="num">' + esc(C.formatPhone(c.phone)) + "</span>" +
+        (sent ? '<span class="pill paid" data-testid="rem-sent">보냄' + (staffName(sent.by) ? " · " + esc(staffName(sent.by)) : "") + "</span>" : "") + "</div>" +
+        '<div class="sms-text" data-testid="rem-text">' + esc(text) + "</div>" +
+        '<div class="req-acts"><a class="btn primary grow" href="' + esc(C.smsHref(c.phone, text, plat)) + '" data-rmsend data-testid="rem-send">문자 보내기</a>' +
+        '<button class="btn" data-rmcopy>문구 복사</button>' +
+        '<button class="btn" data-rmmark data-testid="rem-mark">' + (sent ? "보냄 취소" : "보냄 표시") + "</button></div></div>";
+    }).join("");
+    html += '<button class="btn wide" data-rmclose>닫기</button>';
+    var m = $("#modal"), scroll = !m.hidden && m.firstChild ? m.firstChild.scrollTop : 0;
+    openModal(html, onRemClick);
+    m.firstChild.scrollTop = scroll;
+  }
+  function onRemClick(e) {
+    var t = e.target, card = t.closest("[data-rm]"), r = card ? S.all[card.getAttribute("data-rm")] : null;
+    if (t.closest("[data-rmclose]")) { closeModal(); return; }
+    if (!r) return;
+    // 문자 앱 열기는 막지 않고 같은 클릭에서 '보냄' 기록
+    if (t.closest("[data-rmsend]")) { if (!S.sent[r.id]) markSent(r, true); return; }
+    if (t.closest("[data-rmcopy]")) { copyText(C.reminderText(r), "문구를 복사했어요. 문자에 붙여넣으세요."); return; }
+    if (t.closest("[data-rmmark]")) markSent(r, !S.sent[r.id]);
+  }
+  function markSent(r, on) {
+    var ref = S.db.doc("reminders/" + r.id);
+    (on ? ref.set({ date: r.date, by: S.myStaffId || "", at: nowIso() }) : ref.delete()).catch(function (e) { toast(writeError(e)); });
+  }
+
+  // ---------------- 휴대폰 알림·계정 ----------------
+  async function refreshPushState() {
+    if (!S.push) return;
+    try { S.pushState = await S.push.state(); } catch (e) { S.pushState = "unsupported"; }
+    renderBanner();
+    if (S.tab === "settings") renderBody();
+  }
+  function pushNoticeHtml() {
+    if (!S.push || (S.pushState !== "off" && S.pushState !== "need-install")) return "";
+    if (Date.now() < +(store("pushLater") || 0)) return "";
+    var later = '<button class="btn" data-act="push-later">나중에</button>';
+    if (S.pushState === "need-install") {
+      return '<div class="notice" data-testid="push-notice"><div class="notice-h"><b>아이폰은 홈 화면에 추가해야 알림이 와요</b>' + later + "</div>" +
+        '<div class="notice-line">아래 <b>공유</b> 버튼 → <b>홈 화면에 추가</b>를 누른 뒤, 홈 화면의 세탁기 크루 아이콘으로 열어 주세요.</div></div>';
+    }
+    return '<div class="notice" data-testid="push-notice"><div class="notice-h"><b>알림을 켜 주세요</b>' + later +
+      '<button class="btn primary" data-act="push-on" data-testid="push-on">알림 켜기</button></div>' +
+      '<div class="notice-line">새 예약·고객 요청·내일 확인 문자를 앱을 닫아 두어도 알려 드려요.</div></div>';
+  }
+  async function pushOn() {
+    try { await S.push.enable(); toast("알림을 켰어요."); }
+    catch (e) { toast(e && e.code === "denied" ? "알림이 막혀 있어요. 휴대폰 설정에서 이 앱의 알림을 허용해 주세요." : "알림을 켜지 못했어요. 다시 눌러 주세요."); }
+    refreshPushState();
+  }
+  function pushStateHtml() {
+    var st = S.pushState;
+    if (st === "on") return '<p style="margin:0 0 8px"><b>켜져 있어요.</b> 새 예약·고객 요청·내일 확인 문자를 알려 드려요.</p>' +
+      '<div class="chips"><button class="btn" data-act="push-test" data-testid="push-test">시험 알림 보내기</button><button class="btn" data-act="push-off">알림 끄기</button></div>';
+    if (st === "off") return '<p style="margin:0 0 8px">꺼져 있어요.</p><button class="btn primary" data-act="push-on">알림 켜기</button>';
+    if (st === "denied") return '<p style="margin:0">알림이 막혀 있어요. 휴대폰 <b>설정 → 알림</b>에서 이 앱(또는 크롬)의 알림을 허용한 뒤 다시 열어 주세요.</p>';
+    if (st === "need-install") return '<p style="margin:0">아이폰은 사파리 아래 <b>공유</b> 버튼 → <b>홈 화면에 추가</b>를 누른 뒤, 홈 화면 아이콘으로 열어야 알림을 받을 수 있어요(iOS 16.4 이상).</p>';
+    if (st === "unsupported") return '<p style="margin:0">이 브라우저는 알림을 지원하지 않아요. 크롬(안드로이드)이나 사파리(아이폰)로 열어 주세요.</p>';
+    return '<p class="muted" style="margin:0">확인 중…</p>';
+  }
+
+  function openAccount() {
+    var name = staffName(S.fixedStaff) || "";
+    openModal("<h2>" + esc(name) + "님</h2><p>이 기기에 로그인되어 있어요." + (S.isOwner ? " (사장님)" : "") + "</p>" +
+      '<button class="btn wide" data-mypin>내 비밀번호 바꾸기</button>' +
+      '<button class="btn wide danger" data-logout data-testid="logout">로그아웃</button>',
+      function (e) {
+        if (e.target.closest("[data-mypin]")) { myPin(); return; }
+        if (e.target.closest("[data-logout]")) S.user.signOut();
+      });
+  }
+  function myPin() {
+    pinDialog((staffName(S.fixedStaff) || "") + "님 새 비밀번호", function (pin) { return S.user.changePin(pin); });
+  }
+  function pinDialog(title, run) {
+    openModal("<h2>" + esc(title) + "</h2><p>숫자 6자리를 넣어 주세요. 로그인할 때 써요.</p>" +
+      '<input class="inp num pin-inp" id="pinInp" type="text" inputmode="numeric" autocomplete="off" maxlength="6" data-testid="pin-input">' +
+      '<button class="btn primary wide" data-pinsave data-testid="pin-save">저장</button><button class="btn wide" data-pinno>취소</button>',
+      async function (e) {
+        if (e.target.closest("[data-pinno]")) { closeModal(); return; }
+        if (!e.target.closest("[data-pinsave]")) return;
+        var pin = $("#pinInp").value.replace(/\D/g, "");
+        if (pin.length !== 6) { toast("숫자 6자리를 넣어 주세요."); return; }
+        try { await run(pin); closeModal(); toast("비밀번호를 저장했어요."); }
+        catch (err) { toast(err && err.code === "same_pin" ? "지금과 다른 번호를 넣어 주세요." : "저장하지 못했어요. 다시 눌러 주세요."); }
+      });
+    setTimeout(function () { var i = $("#pinInp"); if (i) i.focus(); }, 50);
+  }
+  // 사장님: 직원별 로그인 계정
+  function loadAccounts() {
+    if (!(S.isOwner && S.fixedStaff && S.user && S.user.accounts) || S.accLoading) return;
+    S.accLoading = true;
+    S.user.accounts().then(function (a) { S.accLoading = false; S.accounts = a; if (S.tab === "settings") renderBody(); },
+      function () { S.accLoading = false; });
+  }
+  function accountsHtml() {
+    if (!(S.isOwner && S.fixedStaff && S.user && S.user.setPin)) return "";
+    if (!S.accounts) loadAccounts();
+    var a = S.accounts || {};
+    return '<div class="section-title">직원 로그인 계정</div><div class="panel" data-testid="accounts">' +
+      S.staff.map(function (p) {
+        var has = !!a[p.id];
+        return '<div class="acct-row"><b>' + esc(p.name) + '</b><span class="muted">' + (!S.accounts ? "" : has ? (a[p.id].isOwner ? "사장님 계정" : "계정 있음") : "계정 없음") + "</span>" +
+          '<button class="btn" data-act="acct-pin" data-sid="' + esc(p.id) + '">' + (has ? "비밀번호 바꾸기" : "계정 만들기") + "</button>" +
+          (has && !a[p.id].isOwner ? '<button class="btn danger" data-act="acct-rm" data-sid="' + esc(p.id) + '">로그인 막기</button>' : "") + "</div>";
+      }).join("") +
+      '<p class="muted" style="margin:8px 0 0;font-size:13px">새 직원은 위 명단에 이름을 넣고 저장한 뒤 [계정 만들기]로 비밀번호 6자리를 정해 알려 주세요. 그만둔 직원은 [로그인 막기]를 누르세요.</p></div>';
+  }
+  function acctPin(sid) {
+    pinDialog(staffName(sid) + "님 비밀번호", async function (pin) {
+      await S.user.setPin(sid, pin);
+      S.accounts = null; loadAccounts();
+    });
+  }
+  function acctRemove(sid) {
+    openModal("<h2>" + esc(staffName(sid)) + "님 로그인 막기</h2><p>이 직원은 더 이상 장부에 들어올 수 없어요. 예약 기록은 그대로 남아요.</p>" +
+      '<button class="btn danger solid wide" data-yes>로그인 막기</button><button class="btn wide" data-no>취소</button>',
+      async function (e) {
+        if (e.target.closest("[data-no]")) { closeModal(); return; }
+        if (!e.target.closest("[data-yes]")) return;
+        try { await S.user.removeAccount(sid); closeModal(); toast("로그인을 막았어요."); S.accounts = null; loadAccounts(); }
+        catch (err) { toast("처리하지 못했어요. 다시 눌러 주세요."); }
+      });
   }
 
   // ---------------- 렌더 ----------------
@@ -349,7 +622,8 @@
         nl.slice(0, 5).map(function (r) { return '<button class="notice-row" data-open="' + esc(r.id) + '">' + esc(noteLine(r)) + "</button>"; }).join("") +
         (nl.length > 5 ? '<div class="muted" style="font-size:13px">외 ' + (nl.length - 5) + "건</div>" : "") + "</div>";
     }
-    if (S.conn === "nodb") msg += '<div class="banner">공유 장부에 연결되지 않았어요. claude.ai에 로그인한 뒤 장부 주인에게 받은 링크로 열어 주세요.</div>';
+    if (S.conn === "ok" && S.tab === "list") msg += reqNoticeHtml() + remindNoticeHtml() + pushNoticeHtml();
+    if (S.conn === "nodb") msg += '<div class="banner">공유 장부에 연결되지 않았어요. 인터넷 연결을 확인하고 화면을 새로고침해 주세요.</div>';
     else if (S.readOnly) msg += '<div class="banner">보기 전용이에요. 예약을 넣거나 고치려면 장부 주인에게 \'편집자\'로 초대해 달라고 요청하세요.</div>';
     b.innerHTML = msg;
   }
@@ -711,24 +985,39 @@
   var staffDraft = null;
   function renderSettings() {
     if (!staffDraft) staffDraft = S.staff.map(function (p) { return { id: p.id, name: p.name }; });
-    var html = '<div class="section-title" style="margin-top:4px">내 이름</div><div class="panel">' +
+    var html = S.fixedStaff
+      ? '<div class="section-title" style="margin-top:4px">내 계정</div><div class="panel" data-testid="my-account"><p style="margin:0 0 8px"><b>' + esc(staffName(S.fixedStaff)) + "님</b>으로 로그인했어요" + (S.isOwner ? " (사장님)" : "") + ".</p>" +
+        '<div class="chips"><button class="btn" data-act="my-pin">비밀번호 바꾸기</button><button class="btn danger" data-act="logout">로그아웃</button></div></div>'
+      : '<div class="section-title" style="margin-top:4px">내 이름</div><div class="panel">' +
       (S.staff.length ? '<div class="chips">' + S.staff.map(function (p) {
         return '<button class="chip" data-pick="' + esc(p.id) + '" aria-pressed="' + (p.id === S.myStaffId) + '">' + esc(p.name) + "</button>";
       }).join("") + '</div><p class="muted" style="margin:8px 0 0;font-size:13px">이 기기에서 쓰는 사람을 고르세요. 참여하기·내 일정에 쓰여요.</p>'
         : '<p class="muted" style="margin:0">아래에 직원 명단을 먼저 넣어 주세요.</p>') + "</div>";
+
+    if (S.push) html += '<div class="section-title">휴대폰 알림</div><div class="panel" data-testid="push-panel">' + pushStateHtml() + "</div>";
+    if (S.bookings) {
+      var bookUrl = new URL("book.html", location.href).href;
+      html += '<div class="section-title">고객 예약 링크</div><div class="panel"><div class="sel-text" data-testid="book-url">' + esc(bookUrl) + "</div>" +
+        '<div class="chips"><button class="btn primary" data-act="copy-book">링크 복사</button><a class="btn" href="' + esc(bookUrl) + '" target="_blank" rel="noopener">열어 보기</a></div>' +
+        '<p class="muted" style="margin:8px 0 0;font-size:13px">카톡·문자·블로그에 붙여 주세요. 고객이 이름·연락처·주소·희망 날짜를 적으면 장부 맨 위 "고객 예약 요청"에 나와요.</p></div>';
+    }
 
     html += '<div class="section-title">내 내비 앱</div><div class="panel"><div class="chips" data-testid="nav-pref">' +
       C.NAV_APPS.map(function (a) {
         return '<button class="chip" data-navpref="' + a.key + '" aria-pressed="' + (a.key === myNavApp()) + '">' + esc(a.label) + "</button>";
       }).join("") + '</div><p class="muted" style="margin:8px 0 0;font-size:13px">예약 주소를 누르면 이 앱 버튼이 맨 위에 크게 나와요. 휴대폰마다 따로 정해요.</p></div>';
 
-    html += '<div class="section-title">직원 명단</div><div class="panel staff-edit" id="staffEdit">' +
+    if (S.fixedStaff && !S.isOwner) {
+      html += '<div class="section-title">직원 명단</div><div class="panel"><div class="chips">' + S.staff.map(function (p) { return '<span class="who">' + esc(p.name) + "</span>"; }).join("") +
+        '</div><p class="muted" style="margin:8px 0 0;font-size:13px">직원 명단은 사장님만 고칠 수 있어요.</p></div>';
+    } else html += '<div class="section-title">직원 명단</div><div class="panel staff-edit" id="staffEdit">' +
       staffDraft.map(function (p, i) {
         return '<div class="row"><input class="inp" id="staff-' + i + '" data-si="' + i + '" value="' + esc(p.name) + '" placeholder="이름" maxlength="20" data-testid="staff-input">' +
           '<button class="btn danger" data-act="staff-rm" data-si="' + i + '" aria-label="' + esc(p.name || "빈 칸") + ' 삭제">삭제</button></div>';
       }).join("") +
       '<div class="row"><button class="btn" data-act="staff-add" data-testid="staff-add">+ 직원 추가</button>' +
       '<button class="btn primary" data-act="staff-save" data-testid="staff-save" style="margin-left:auto"' + (canWrite() ? "" : " disabled") + ">명단 저장</button></div></div>";
+    html += accountsHtml();
 
     if (S.assets && S.isOwner) {
       html += '<div class="section-title">사진 저장 공간</div><div class="panel" id="usage" data-testid="usage">' + (S.usageText || "확인 중…") + "</div>";
@@ -746,11 +1035,14 @@
       '<div><div class="t">세탁기 <b>크루</b></div><div class="muted">세척·이전설치 예약과 월별 매출 장부</div>' +
       '<div style="margin-top:6px;font-weight:600">개발 · 신창민</div></div></div>';
 
-    html += '<div class="section-title">함께 쓰는 방법</div><div class="panel help"><ol style="margin:0;padding-left:20px">' +
-      "<li>장부 주인이 오른쪽 위 <b>공유</b> 메뉴에서 직원 이메일을 <b>편집자</b>로 초대해요. (공개 링크를 켜면 직원이 입력할 수 없게 되니 켜지 마세요.)</li>" +
+    html += '<div class="section-title">함께 쓰는 방법</div><div class="panel help"><ol style="margin:0;padding-left:20px">' + (S.fixedStaff
+      ? "<li>휴대폰에서 장부 주소를 열고 내 이름을 누른 뒤 비밀번호 6자리를 넣어요. 한 번 들어오면 다음부터는 바로 열려요.</li>" +
+        "<li>브라우저 메뉴의 <b>홈 화면에 추가</b>(아이폰은 사파리 <b>공유</b> 버튼)로 앱처럼 열고, <b>알림 켜기</b>를 눌러 두세요.</li>" +
+        "<li>예약을 넣거나 고치면 다른 직원 화면에도 바로 반영되고, 통계도 자동으로 다시 계산돼요.</li></ol>"
+      : "<li>장부 주인이 오른쪽 위 <b>공유</b> 메뉴에서 직원 이메일을 <b>편집자</b>로 초대해요. (공개 링크를 켜면 직원이 입력할 수 없게 되니 켜지 마세요.)</li>" +
       "<li>직원은 claude.ai에 로그인한 뒤 받은 링크를 열고, 처음 한 번 자기 이름을 골라요.</li>" +
       "<li>휴대폰에서는 브라우저 메뉴의 <b>홈 화면에 추가</b>로 앱처럼 열 수 있어요.</li>" +
-      "<li>예약을 넣거나 고치면 다른 직원 화면에도 바로 반영되고, 통계도 자동으로 다시 계산돼요.</li></ol>" +
+      "<li>예약을 넣거나 고치면 다른 직원 화면에도 바로 반영되고, 통계도 자동으로 다시 계산돼요.</li></ol>") +
       '<p style="margin:10px 0 0">매출 기준: <b>완료 매출</b>은 완료 처리된 예약, <b>예정 매출</b>은 아직 작업 전인 예약 금액이에요. 취소한 예약은 빠져요. <b>미수금</b>은 완료됐지만 입금 확인이 안 된 금액이에요.</p>' +
       '<p class="muted" style="margin:10px 0 0;font-size:13px">연결 상태: ' + (S.conn === "ok" ? (S.readOnly ? "보기 전용" : "공유 장부 연결됨") : S.conn === "connecting" ? "연결 중" : "연결 안 됨") + "</p></div>";
     $("#body").innerHTML = html;
@@ -830,6 +1122,7 @@
     $("#sumStrip").onclick = function () { setTab("stats"); };
     $("#fab").onclick = function () { openForm(null); };
     $("#meChip").onclick = function () {
+      if (S.fixedStaff) { openAccount(); return; }
       if (!S.staff.length) { if (S.conn === "ok") openStaffSetup(); else setTab("settings"); return; }
       askIdentity();
     };
@@ -884,6 +1177,17 @@
       if (a === "staff-add") { staffDraft.push({ id: "", name: "" }); renderBody(); var last = $("#staff-" + (staffDraft.length - 1)); if (last) last.focus(); return; }
       if (a === "staff-rm") { staffDraft.splice(+act.getAttribute("data-si"), 1); renderBody(); return; }
       if (a === "staff-save") return saveStaff();
+      if (a === "open-reqs") return openRequests();
+      if (a === "open-rem") return openReminders();
+      if (a === "push-on") return pushOn();
+      if (a === "push-later") { store("pushLater", String(Date.now() + 3 * 86400000)); renderBanner(); return; }
+      if (a === "push-off") { S.push.disable().then(refreshPushState); return; }
+      if (a === "push-test") { S.push.test().then(function () { toast("시험 알림을 보냈어요. 잠시 뒤 휴대폰을 확인하세요."); }, function () { toast("보내지 못했어요. 다시 눌러 주세요."); }); return; }
+      if (a === "my-pin") return myPin();
+      if (a === "logout") return S.user.signOut();
+      if (a === "copy-book") return copyText(new URL("book.html", location.href).href, "예약 링크를 복사했어요.");
+      if (a === "acct-pin") return acctPin(act.getAttribute("data-sid"));
+      if (a === "acct-rm") return acctRemove(act.getAttribute("data-sid"));
       return;
     }
     if (host && r) openForm(r.id);
@@ -994,7 +1298,7 @@
     if (!rows.length) { toast("내보낼 예약이 없어요."); return; }
     var csv = C.toCSV(rows, S.staff);
     var name = "예약내역_" + (year ? S.ym.slice(0, 4) + "년" : S.ym) + ".csv";
-    if (!S.downloads) { toast("이 화면에서는 파일 받기를 쓸 수 없어요. claude.ai에서 열어 주세요."); return; }
+    if (!S.downloads) { toast("이 화면에서는 파일 받기를 쓸 수 없어요."); return; }
     try {
       await S.downloads.save({ filename: name, data: csv });
       toast("파일을 저장했어요.");
@@ -1021,14 +1325,15 @@
     };
   }
 
-  function openForm(id, date) {
+  function openForm(id, date, prefill) {
     if (!id && !canWrite()) return;
     // 새 예약은 누가 넣는지 알아야 나중에 그 사람만 고칠 수 있음
-    if (!id && !needMe(function () { openForm(null, date); })) return;
+    if (!id && !needMe(function () { openForm(null, date, prefill); })) return;
     var r = id ? S.all[id] : null;
     if (id && !r) return;
     if (id) markSeen(id);
     var data = r ? clone(r) : blank(date);
+    if (prefill) Object.keys(prefill).forEach(function (k) { if (k !== "fromRequest" && prefill[k] !== undefined) data[k] = clone({ v: prefill[k] }).v; });
     delete data.id;
     data.customer = Object.assign({ name: "", phone: "", address: "" }, data.customer);
     data.site = Object.assign({ floor: "", elevator: "", parking: "", memo: "" }, data.site);
@@ -1036,7 +1341,7 @@
     data.payment = Object.assign({ method: "미정", paid: false }, data.payment);
     data.workers = data.workers || {};
     if (!Array.isArray(data.items) || !data.items.length) data.items = [{ type: "통돌이", model: "", qty: 1, work: "세척" }];
-    F = { readOnly: !!(r && !canEditRes(r)), id: id, data: data, orig: r ? clone(r) : null, openedAt: r ? r.updatedAt || r.createdAt || "" : "", errors: {}, staleOk: false, confirmDel: false, hist: null, histFor: "" };
+    F = { readOnly: !!(r && !canEditRes(r)), id: id, data: data, orig: r ? clone(r) : null, openedAt: r ? r.updatedAt || r.createdAt || "" : "", errors: {}, staleOk: false, confirmDel: false, hist: null, histFor: "", fromRequest: (prefill && prefill.fromRequest) || null };
     renderForm();
     $("#sheet").hidden = false;
     document.body.style.overflow = "hidden";
@@ -1390,6 +1695,7 @@
         body.createdAt = body.updatedAt;
         var ref = F.id ? S.db.doc("reservations/" + F.id) : S.db.collection("reservations").doc();
         await ref.set(body);
+        if (F.fromRequest && S.bookings) S.bookings.accept(F.fromRequest, ref.id).catch(function () { /* 요청 목록에 남으면 다시 처리 */ });
         if (C.ymOf(d.date) !== S.ym) setMonth(C.ymOf(d.date));
         toast(C.dayLabel(d.date) + " " + d.time + " 예약을 저장했어요.");
       }
@@ -1412,6 +1718,23 @@
 
   // ---------------- 작업 사진 ----------------
   var KIND = { before: "작업 전", after: "작업 후" };
+  // 사진 주소: 웹앱은 비공개 보관함의 서명된 주소(받아 오는 동안은 빈 칸), 가짜 런타임은 /_blob/<id>
+  function blobAttr(id) {
+    if (!(S.assets && S.assets.src)) return ' src="/_blob/' + esc(id) + '"';
+    var u = S.assets.src(id);
+    return (u ? ' src="' + esc(u) + '"' : "") + ' data-blob="' + esc(id) + '"';
+  }
+  function fillBlobs(root) {
+    if (!(S.assets && S.assets.prefetch)) return;
+    var imgs = Array.prototype.slice.call(root.querySelectorAll("img[data-blob]:not([src])"));
+    if (!imgs.length) return;
+    S.assets.prefetch(imgs.map(function (i) { return i.getAttribute("data-blob"); })).then(function (urls) {
+      imgs.forEach(function (i) {
+        var u = urls[i.getAttribute("data-blob")];
+        if (u) i.src = u; else { i.classList.add("broken"); if (i.parentNode) i.parentNode.title = "사진을 불러올 수 없어요"; }
+      });
+    }).catch(function () { /* 다음 화면 갱신 때 다시 */ });
+  }
   var GONE = {}; // 방금 지운 사진(기록이 갱신되기 전에도 바로 숨김)
   function livePhotos(r, kind) { return C.photoList(r, kind).filter(function (p) { return !GONE[p.id]; }); }
   function openPhotos(id) {
@@ -1433,7 +1756,7 @@
       if (i < 0) { P.view = null; return renderPhotos(); }
       var ph = all[i], same = livePhotos(r, ph.kind), k = same.map(function (p) { return p.id; }).indexOf(ph.id);
       html = '<div class="pv-top"><button class="btn" data-pback>목록으로</button><b>' + KIND[ph.kind] + " " + (k + 1) + "/" + same.length + "</b></div>" +
-        '<div class="pv-img"><img src="/_blob/' + esc(ph.id) + '" alt="' + KIND[ph.kind] + ' 사진" data-testid="photo-big"></div>' +
+        '<div class="pv-img"><img' + blobAttr(ph.id) + ' alt="' + KIND[ph.kind] + ' 사진" data-testid="photo-big"></div>' +
         '<p class="muted pv-meta">' + esc(staffName(ph.by) || "") + " " + esc(fmtStamp(ph.at)) + "에 올림</p>" +
         '<div class="pv-nav"><button class="btn" data-pstep="-1"' + (i > 0 ? "" : " disabled") + '>이전</button><button class="btn" data-pstep="1"' + (i < all.length - 1 ? "" : " disabled") + ">다음</button>" +
         (canUp ? (P.confirmDel ? '<span class="pv-del"><button class="btn" data-pdelno>아니요</button><button class="btn danger solid" data-pdelyes data-testid="photo-del-yes">삭제</button></span>'
@@ -1446,7 +1769,7 @@
         var list = livePhotos(r, kind);
         html += '<div class="ph-sec"><div class="ph-h">' + KIND[kind] + ' <span class="num muted">' + list.length + "장</span></div>" +
           '<div class="ph-grid" data-testid="grid-' + kind + '">' + list.map(function (p, n) {
-            return '<button class="ph" data-pv="' + esc(p.id) + '"><img src="/_blob/' + esc(p.id) + '" alt="' + KIND[kind] + " 사진 " + (n + 1) + '" loading="lazy"></button>';
+            return '<button class="ph" data-pv="' + esc(p.id) + '"><img' + blobAttr(p.id) + ' alt="' + KIND[kind] + " 사진 " + (n + 1) + '" loading="lazy"></button>';
           }).join("") +
           // 고르자마자 미리보기, 올라가는 동안 표시
           ((up && up.items) || []).filter(function (u) { return u.kind === kind; }).map(function (u) {
@@ -1464,6 +1787,7 @@
     openModal(html, onPhotoClick);
     m.firstChild.classList.add("photo-modal");
     if (!P.view) m.firstChild.scrollTop = scroll;
+    fillBlobs(m);
     m.onchange = function (e) {
       var inp = e.target;
       if (inp && inp.matches("input[type=file][data-kind]") && inp.files && inp.files.length) uploadPhotos(Array.prototype.slice.call(inp.files), inp.getAttribute("data-kind"));

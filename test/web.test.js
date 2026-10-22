@@ -1,0 +1,423 @@
+// node test/web.test.js — 웹앱(Supabase 연결)을 가짜 Supabase로 브라우저에서 검증합니다.
+// 1) 어댑터 계약: supa-db.js 의 db 가 예전 가짜 claude 런타임과 같은 결과를 내는지
+// 2) 로그인·고객 예약 요청·내일 확인 문자·사진·알림·PWA
+const http = require("http");
+const fs = require("fs");
+const path = require("path");
+const { chromium } = require(process.env.PLAYWRIGHT_PATH || "/opt/node22/lib/node_modules/playwright");
+const mockClaude = require("./mock-claude.js");
+const mockSupabase = require("./mock-supabase.js");
+
+const ROOT = path.join(__dirname, "..", "web");
+const blobs = new Map();
+const booked = [];
+const TYPES = { ".js": "text/javascript; charset=utf-8", ".html": "text/html; charset=utf-8", ".webp": "image/webp", ".png": "image/png", ".webmanifest": "application/manifest+json" };
+const server = http.createServer((req, res) => {
+  const u = req.url.split("?")[0];
+  if (u === "/config.js") {
+    res.writeHead(200, { "content-type": TYPES[".js"] });
+    return res.end('window.WC_CONFIG = { url: "", key: "test-key", vapidPublic: "BN-veQ_r2zno2rW8Zj3r32mDfxiS_3uIagUmGDtKudBtCRLPuDUFrbEf-g4k-GaWBCe5QVKyv026MBKwUfqQQeY", emailDomain: "washer-crew.local" };');
+  }
+  if (u === "/vendor/supabase.js") { res.writeHead(200, { "content-type": TYPES[".js"] }); return res.end("/* 테스트: 가짜 Supabase 사용 */"); }
+  if (u === "/rest/v1/rpc/submit_booking" && req.method === "POST") {
+    let b = "";
+    req.on("data", (c) => (b += c));
+    req.on("end", () => {
+      const p = JSON.parse(b).p;
+      if (req.headers.apikey !== "test-key") { res.writeHead(401); return res.end("{}"); }
+      if (booked.some((x) => x.phone === p.phone)) { res.writeHead(400, { "content-type": "application/json" }); return res.end(JSON.stringify({ code: "22023", message: "too_many" })); }
+      booked.push(p);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end('{"ok":true}');
+    });
+    return;
+  }
+  if (u.startsWith("/_blob/")) {
+    const id = u.slice(7);
+    if (req.method === "PUT") {
+      const chunks = [];
+      req.on("data", (c) => chunks.push(c));
+      req.on("end", () => { blobs.set(id, { type: req.headers["content-type"], buf: Buffer.concat(chunks) }); res.writeHead(200); res.end(); });
+      return;
+    }
+    if (req.method === "DELETE") { blobs.delete(id); res.writeHead(200); return res.end(); }
+    const b = blobs.get(id);
+    if (!b) { res.writeHead(404); return res.end(); }
+    res.writeHead(200, { "content-type": b.type });
+    return res.end(b.buf);
+  }
+  const rel = u === "/" ? "/index.html" : u;
+  const f = path.join(ROOT, path.normalize(rel));
+  if (!f.startsWith(ROOT) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); return res.end(); }
+  res.writeHead(200, { "content-type": TYPES[path.extname(f)] || "text/plain" });
+  res.end(fs.readFileSync(f));
+});
+
+let passed = 0, failed = 0;
+async function step(name, fn) {
+  try { await fn(); passed++; console.log("  ok  " + name); }
+  catch (e) { failed++; if (process.env.DEBUG) console.log(e); console.log("  FAIL " + name + "\n       " + String(e.message || e).split("\n").slice(0, 6).join("\n       ")); }
+}
+function eq(a, b, msg) { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error((msg || "") + " 기대값=" + JSON.stringify(b) + " 실제=" + JSON.stringify(a)); }
+function ok(v, msg) { if (!v) throw new Error(msg || "조건 불충족"); }
+function pad(n) { return (n < 10 ? "0" : "") + n; }
+function dstr(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
+const TODAY = dstr(new Date());
+const TOMORROW = dstr(new Date(Date.now() + 86400000));
+
+const STAFF = { list: [{ id: "smvivcjg00", name: "김영우" }, { id: "smvivcjg01", name: "박상연" }, { id: "smvivcjg03", name: "신창민" }] };
+const ACCOUNTS = [
+  { uid: "u-kim", staffId: "smvivcjg00", pin: "111111", owner: false },
+  { uid: "u-park", staffId: "smvivcjg01", pin: "222222", owner: false },
+  { uid: "u-shin", staffId: "smvivcjg03", pin: "333333", owner: true }
+];
+
+(async () => {
+  await new Promise((r) => server.listen(0, r));
+  const BASE = "http://127.0.0.1:" + server.address().port + "/";
+  const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome" }).catch(() => chromium.launch());
+  const errors = [];
+  function watch(page, label) {
+    page.on("pageerror", (e) => errors.push(label + " pageerror: " + e.message));
+    page.on("console", (m) => {
+      // 같은 번호 재전송 시험의 400 응답은 일부러 낸 것
+      if (m.type() === "error" && !(label === "book" && /status of 400/.test(m.text()))) errors.push(label + " console: " + m.text());
+    });
+    page.on("response", (r) => { if (r.status() === 404) errors.push(label + " 404: " + r.url()); });
+    return page;
+  }
+  // 가짜 Supabase 로 연 장부. seed: { docs, bookings } , session: 로그인한 uid
+  async function webPage(ctx, opt) {
+    opt = opt || {};
+    const page = watch(await ctx.newPage(), opt.label || "web");
+    await page.addInitScript(mockSupabase, { accounts: ACCOUNTS });
+    await page.goto(BASE + "book.html"); // 같은 출처에서 저장소 준비
+    await page.evaluate((o) => {
+      if (o.seed) localStorage.setItem("fakesb", JSON.stringify(Object.assign({ accounts: o.accounts }, o.seed)));
+      if (o.session) sessionStorage.setItem("fakesb.session", o.session); else sessionStorage.removeItem("fakesb.session");
+    }, { seed: opt.seed, session: opt.session, accounts: ACCOUNTS });
+    await page.goto(BASE + (opt.path || ""));
+    return page;
+  }
+  const fakeDb = (p) => p.evaluate(() => JSON.parse(localStorage.getItem("fakesb")));
+
+  // ---------------- 1. 어댑터 계약 ----------------
+  console.log("어댑터 계약(예전 런타임과 같은 동작)");
+  const contract = async () => {
+    const db = await window.claude.use("db");
+    const out = {};
+    const ids = (s) => s.docs.map((d) => d.id);
+    await db.doc("reservations/a").set({ date: "2026-01-05", n: 1, w: { x: true }, arr: [1, 2] });
+    await db.doc("reservations/b").set({ date: "2026-02-01", n: 2 });
+    await db.doc("reservations/c").set({ date: "2025-12-31", n: 5 });
+    out.get = (await db.doc("reservations/a").get()).data();
+    out.frozen = Object.isFrozen(out.get) && Object.isFrozen(out.get.w);
+    await db.doc("reservations/a").update({ w: { y: "maybe" }, n: 3, arr: [9] });
+    await db.doc("reservations/a").update({ w: { x: false } });
+    out.merged = (await db.doc("reservations/a").get()).data();
+    try { await db.doc("reservations/zz").update({ n: 1 }); out.missing = "no error"; } catch (e) { out.missing = e.code; }
+    out.missingGet = (await db.doc("reservations/zz").get()).exists;
+    out.range = ids(await db.collection("reservations").where("date", ">=", "2026-01-01").where("date", "<", "2027-01-01").get());
+    out.numEq = ids(await db.collection("reservations").where("n", "==", 2).get());
+    out.ordered = ids(await db.collection("reservations").orderBy("n", "desc").limit(2).get());
+    const r = db.collection("reservations").doc();
+    out.newIdOk = /^[a-z0-9]{6,}$/.test(r.id);
+    const added = await db.collection("notes").add({ t: 1 });
+    out.added = (await added.get()).data();
+    const seen = [];
+    const un = db.collection("reservations").where("date", ">=", "2026-01-01").onSnapshot((s) => seen.push(ids(s).join(",")));
+    await new Promise((res) => setTimeout(res, 150));
+    await db.doc("reservations/d").set({ date: "2026-03-01", n: 0 });
+    await new Promise((res) => setTimeout(res, 250));
+    await db.doc("reservations/b").delete();
+    await new Promise((res) => setTimeout(res, 250));
+    un();
+    out.snapshots = seen;
+    const dseen = [];
+    const un2 = db.doc("config/x").onSnapshot((s) => dseen.push(s.exists ? s.data().v : null));
+    await new Promise((res) => setTimeout(res, 150));
+    await db.doc("config/x").set({ v: 1 });
+    await new Promise((res) => setTimeout(res, 250));
+    un2();
+    out.docSnapshots = dseen;
+    out.subcol = (await db.collection("data/users/" + (await (await window.claude.use("user")).id())).doc("me").get()).exists;
+    return out;
+  };
+  let expected, actual;
+  await step("예전 가짜 런타임 기준값 만들기", async () => {
+    const c = await browser.newContext();
+    const p = watch(await c.newPage(), "mock");
+    await p.addInitScript(mockClaude, { uid: "u-shin", owner: true });
+    await p.goto(BASE + "book.html");
+    expected = await p.evaluate(contract);
+    await c.close();
+  });
+  await step("Supabase 어댑터: get/set/병합/삭제/조건/정렬/실시간이 같음", async () => {
+    const c = await browser.newContext();
+    const p = await webPage(c, { session: "u-shin", seed: { docs: { "config/staff": STAFF } }, path: "book.html" });
+    await p.addScriptTag({ url: BASE + "supa-db.js" });
+    actual = await p.evaluate(contract);
+    await c.close();
+    const a = Object.assign({}, actual, { subcol: null }), e = Object.assign({}, expected, { subcol: null });
+    eq(a, e, "결과 다름");
+    eq(actual.merged, { date: "2026-01-05", n: 3, w: { x: false, y: "maybe" }, arr: [9] }, "중첩 병합·배열 교체");
+    eq(actual.missing, "invalid_argument");
+  });
+
+  // ---------------- 2. 로그인 ----------------
+  console.log("로그인(이름 + 비밀번호 6자리)");
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: "ko-KR", timezoneId: "Asia/Seoul", hasTouch: true });
+  const seed = {
+    docs: {
+      "config/staff": STAFF,
+      ["reservations/r_tmr"]: { date: TOMORROW, time: "10:00", durationMin: 120, status: "scheduled", customer: { name: "김민지", phone: "010-1234-5678", address: "수원" }, items: [{ type: "건조기", qty: 1, work: "이전설치" }], total: 150000, payment: { method: "미정", paid: false }, workers: {}, createdBy: "smvivcjg00", createdAt: "2026-01-01T00:00:00Z" },
+      ["reservations/r_kim"]: { date: TODAY, time: "15:00", durationMin: 60, status: "scheduled", customer: { name: "남의고객", phone: "", address: "서울" }, items: [{ type: "통돌이", qty: 1, work: "세척" }], total: 50000, payment: { method: "미정", paid: false }, workers: {}, createdBy: "smvivcjg00", createdAt: "2026-01-01T00:00:00Z" }
+    },
+    bookings: [
+      { id: "b1", created_at: new Date().toISOString(), status: "new", name: "이고객", phone: "010-5555-6666", phone_digits: "01055556666", address: "용인시 기흥구 1", move_to: "수원시 영통구 2", want_date: TOMORROW, time_slot: "오후", items: [{ type: "건조기", qty: 1, work: "이전설치" }], note: "엘리베이터 있음" },
+      { id: "b2", created_at: new Date().toISOString(), status: "new", name: "스팸", phone: "010-0000-0000", phone_digits: "01000000000", address: "x", move_to: "", want_date: TOMORROW, time_slot: "", items: [], note: "" }
+    ]
+  };
+  const p = await webPage(ctx, { seed, label: "owner" });
+
+  await step("처음엔 로그인 화면: 계정 있는 직원 이름만", async () => {
+    await p.waitForSelector("[data-testid=login-신창민]");
+    eq(await p.locator(".login-names .btn").count(), 3);
+    ok(!(await p.isVisible("#app")), "장부는 숨김");
+  });
+  await step("틀린 비밀번호 → 안내, 맞으면 장부 열림(이름 다시 고르지 않음)", async () => {
+    await p.click("[data-testid=login-신창민]");
+    for (const d of "123456") await p.click(`.pin-pad [data-key="${d}"]`);
+    await p.waitForFunction(() => document.querySelector("[data-testid=login-err]").textContent.includes("맞지 않아요"));
+    for (const d of "333333") await p.click(`.pin-pad [data-key="${d}"]`);
+    await p.waitForSelector("#login", { state: "detached" });
+    await p.waitForFunction(() => document.querySelector("#meName").textContent === "신창민님");
+    await p.waitForSelector("[data-testid=card]");
+    ok(!(await p.isVisible("#modal")), "누구세요 창 없음");
+  });
+  await step("새로고침해도 로그인 유지", async () => {
+    await p.reload();
+    await p.waitForSelector("[data-testid=card]");
+    ok(!(await p.$("#login")), "로그인 화면 없음");
+  });
+
+  // ---------------- 3. 고객 예약 요청 ----------------
+  console.log("고객 예약 요청");
+  await step("장부 맨 위에 '고객 예약 요청 2건'", async () => {
+    await p.waitForSelector("[data-testid=req-notice]");
+    ok((await p.innerText("[data-testid=req-notice]")).includes("고객 예약 요청 2건"));
+  });
+  await step("[확정] → 입력 화면이 채워져 열림 → 저장하면 예약 생성·요청 처리", async () => {
+    await p.click("[data-testid=open-reqs]");
+    await p.waitForSelector("[data-testid=req-card]");
+    await p.locator("[data-testid=req-card]", { hasText: "이고객" }).locator("[data-testid=req-accept]").click();
+    await p.waitForSelector("#sheet:not([hidden]) [data-testid=f-name]");
+    eq(await p.inputValue("[data-testid=f-name]"), "이고객");
+    eq(await p.inputValue("[data-testid=f-phone]"), "010-5555-6666");
+    eq(await p.inputValue("[data-testid=f-addr]"), "용인시 기흥구 1");
+    eq(await p.inputValue("[data-testid=f-addr2]"), "수원시 영통구 2");
+    eq(await p.inputValue("[data-testid=f-date]"), TOMORROW);
+    eq(await p.inputValue("[data-testid=f-time]"), "13:00");
+    eq(await p.inputValue("[data-testid=item-type]"), "건조기");
+    ok((await p.inputValue("#f-note")).includes("엘리베이터 있음"));
+    await p.fill("[data-testid=f-total]", "180000");
+    await p.click("[data-testid=save]");
+    await p.waitForSelector("#sheet", { state: "hidden" });
+    await p.waitForFunction(() => JSON.parse(localStorage.getItem("fakesb")).bookings[0].status === "accepted");
+    const d = await fakeDb(p);
+    const b1 = d.bookings[0];
+    const res = d.docs["reservations/" + b1.reservation_id];
+    ok(res && res.customer.name === "이고객" && res.createdBy === "smvivcjg03" && res.total === 180000, JSON.stringify(res));
+    eq(b1.handled_by, "smvivcjg03");
+    await p.waitForFunction(() => document.querySelector("[data-testid=req-notice]").innerText.includes("1건"));
+  });
+  await step("[거절] → 확인 후 요청 목록에서 사라짐", async () => {
+    await p.click("[data-testid=open-reqs]");
+    await p.click("[data-testid=req-reject]");
+    await p.click("[data-testid=req-reject-yes]");
+    await p.waitForFunction(() => JSON.parse(localStorage.getItem("fakesb")).bookings[1].status === "rejected");
+    await p.waitForFunction(() => !document.querySelector("#modal [data-testid=req-card]"));
+    await p.click("[data-rqclose]");
+    await p.waitForFunction(() => !document.querySelector("[data-testid=req-notice]"));
+  });
+
+  // ---------------- 4. 내일 확인 문자 ----------------
+  console.log("내일 확인 문자");
+  await step("배너 → 고객별 문구가 채워진 문자 링크", async () => {
+    await p.waitForSelector("[data-testid=remind-notice]");
+    ok((await p.innerText("[data-testid=remind-notice]")).includes("내일 예약 2건"));
+    await p.click("[data-testid=open-rem]");
+    await p.waitForSelector("[data-testid=rem-card]");
+    const t = await p.locator("[data-testid=rem-card]", { hasText: "김민지" }).locator("[data-testid=rem-text]").innerText();
+    ok(t.startsWith("[세탁기 크루] 김민지 고객님, 내일 ") && t.includes("오전 10시 건조기 이전설치 예약 확인 드립니다"), t);
+    const href = await p.locator("[data-testid=rem-card]", { hasText: "김민지" }).locator("[data-testid=rem-send]").getAttribute("href");
+    ok(href.startsWith("sms:01012345678?body=%5B%EC%84%B8%ED%83%81%EA%B8%B0"), href);
+  });
+  await step("[보냄 표시] → 기록되고 다 보내면 배너 사라짐", async () => {
+    for (const name of ["김민지", "이고객"]) {
+      await p.locator("[data-testid=rem-card]", { hasText: name }).locator("[data-testid=rem-mark]").click();
+      await p.waitForFunction((n) => { const c = [...document.querySelectorAll("[data-testid=rem-card]")].find((x) => x.textContent.includes(n)); return c && c.querySelector("[data-testid=rem-sent]"); }, name);
+    }
+    const d = await fakeDb(p);
+    ok(d.docs["reminders/r_tmr"] && d.docs["reminders/r_tmr"].by === "smvivcjg03", "보낸 기록");
+    await p.click("[data-rmclose]");
+    await p.waitForFunction(() => !document.querySelector("[data-testid=remind-notice]"));
+  });
+
+  // ---------------- 5. 설정·알림·계정 ----------------
+  console.log("설정·알림·계정");
+  await step("알림 꺼짐 안내 배너 → [나중에]로 숨김", async () => {
+    await p.waitForSelector("[data-testid=push-notice]");
+    await p.click("[data-testid=push-notice] [data-act=push-later]");
+    await p.waitForFunction(() => !document.querySelector("[data-testid=push-notice]"));
+  });
+  await step("사장님 설정: 내 계정·알림·고객 예약 링크·직원 계정 관리", async () => {
+    await p.click("[data-testid=tab-settings]");
+    await p.waitForSelector("[data-testid=my-account]");
+    ok((await p.innerText("[data-testid=my-account]")).includes("신창민님으로 로그인했어요 (사장님)"));
+    ok((await p.innerText("[data-testid=push-panel]")).includes("꺼져 있어요"));
+    eq(await p.innerText("[data-testid=book-url]"), BASE + "book.html");
+    await p.waitForFunction(() => document.querySelector("[data-testid=accounts]") && document.querySelector("[data-testid=accounts]").innerText.includes("사장님 계정"));
+    ok(await p.isVisible("[data-testid=staff-save]"), "사장님은 명단 수정 가능");
+  });
+  await step("사장님이 직원 비밀번호 바꾸기", async () => {
+    await p.locator(".acct-row", { hasText: "박상연" }).locator("[data-act=acct-pin]").click();
+    await p.fill("[data-testid=pin-input]", "987654");
+    await p.click("[data-testid=pin-save]");
+    await p.waitForFunction(() => JSON.parse(localStorage.getItem("fakesb")).accounts.find((a) => a.staffId === "smvivcjg01").pin === "987654");
+  });
+
+  // ---------------- 6. 사진(비공개 보관함) ----------------
+  console.log("사진");
+  const tinyJpeg = Buffer.from("/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=", "base64");
+  await step("사진 올리기 → 서명된 주소로 표시", async () => {
+    await p.click("[data-testid=tab-list]");
+    await p.waitForSelector("[data-testid=card]");
+    await p.locator("[data-testid=card]", { hasText: "김민지" }).locator("[data-testid=photos-btn]").click();
+    await p.setInputFiles("[data-testid=file-before]", { name: "a.jpg", mimeType: "image/jpeg", buffer: tinyJpeg });
+    await p.waitForSelector("[data-testid=grid-before] .ph img[data-blob][src*='token=']");
+    const d = await fakeDb(p);
+    const ids = Object.keys(d.files);
+    eq(ids.length, 1);
+    eq(d.files[ids[0]].owner, "u-shin");
+    ok(d.docs["reservations/r_tmr"].photos[ids[0]].by === "smvivcjg03");
+    await p.click("[data-pclose]");
+  });
+  const p2 = await webPage(ctx, { session: "u-park", label: "park" }); // 같은 기기(저장소 공유), 다른 탭에서 다른 직원
+  await step("다른 직원: 남이 넣은 예약은 보기만, 직원 명단은 사장님만", async () => {
+    await p2.waitForSelector("[data-testid=card]");
+    await p2.locator("[data-testid=card]", { hasText: "남의고객" }).click();
+    await p2.waitForSelector("[data-testid=readonly-note]");
+    await p2.click("[data-testid=close-view]");
+    await p2.click("[data-testid=tab-settings]");
+    await p2.waitForSelector("[data-testid=my-account]");
+    ok(!(await p2.$("[data-testid=staff-save]")), "명단 저장 버튼 없음");
+    ok(!(await p2.$("[data-testid=accounts]")), "계정 관리 없음");
+    await p2.click("[data-testid=tab-list]");
+  });
+  await step("다른 직원: 사장님 사진은 보이지만 지울 수 없음", async () => {
+    await p2.locator("[data-testid=card]", { hasText: "김민지" }).locator("[data-testid=photos-btn]").click();
+    await p2.waitForSelector("[data-testid=grid-before] .ph img[src*='token=']");
+    await p2.click("[data-testid=grid-before] .ph");
+    await p2.click("[data-testid=photo-del]");
+    await p2.click("[data-testid=photo-del-yes]");
+    await p2.waitForFunction(() => document.querySelector("#toast").textContent.includes("올린 사람이나 사장님만"));
+    eq(Object.keys((await fakeDb(p2)).files).length, 1);
+  });
+  await step("다른 직원 화면에 새 예약 실시간 반영(같은 기기 다른 탭)", async () => {
+    const t2 = await webPage(p2.context(), { session: "u-park", label: "park2", path: "" });
+    await t2.waitForSelector("[data-testid=card]");
+    await p2.evaluate(async () => {
+      const db = await window.claude.use("db");
+      await db.collection("reservations").doc("r_live").set({ date: new Date().toISOString().slice(0, 10), time: "11:00", durationMin: 60, status: "scheduled", customer: { name: "실시간고객", phone: "", address: "" }, items: [{ type: "통돌이", qty: 1, work: "세척" }], total: 1, payment: { method: "미정", paid: false }, workers: {}, createdBy: "smvivcjg01", createdAt: new Date().toISOString() });
+    });
+    await t2.waitForFunction(() => document.body.innerText.includes("실시간고객"));
+    await t2.close();
+  });
+
+  // ---------------- 7. 고객 예약 페이지 ----------------
+  console.log("고객 예약 페이지(book.html)");
+  const bc = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const bp = watch(await bc.newPage(), "book");
+  await bp.goto(BASE + "book.html");
+  await step("빈 칸·기기 미선택·동의 없음이면 안내만", async () => {
+    await bp.click("[data-testid=b-send]");
+    ok(await bp.isVisible("#e-items"), "기기");
+    ok(await bp.isVisible("#e-name"), "이름");
+    ok(await bp.isVisible("#e-form"), "동의");
+    eq(booked.length, 0);
+  });
+  await step("이전설치 선택 → 도착지 칸, 제출하면 요청 접수", async () => {
+    await bp.click("[data-work='이전설치']");
+    ok(await bp.isVisible("[data-testid=b-addr2]"));
+    await bp.click("[data-type='건조기']");
+    await bp.click("[data-type='LG 2단']");
+    await bp.click("[data-q='1'][data-t='LG 2단']");
+    await bp.fill("[data-testid=b-date]", TOMORROW);
+    await bp.click("[data-slot='오전 (9~12시)']");
+    await bp.fill("[data-testid=b-name]", "최고객");
+    await bp.fill("[data-testid=b-phone]", "01077778888");
+    await bp.fill("[data-testid=b-addr]", "출발 주소");
+    await bp.fill("[data-testid=b-addr2]", "도착 주소");
+    await bp.fill("[data-testid=b-note]", "3층");
+    await bp.check("[data-testid=b-agree]");
+    await bp.click("[data-testid=b-send]");
+    await bp.waitForSelector("[data-testid=b-done]");
+    eq(booked[0], { name: "최고객", phone: "010-7777-8888", address: "출발 주소", moveTo: "도착 주소", date: TOMORROW, timeSlot: "오전",
+      items: [{ type: "건조기", qty: 1, work: "이전설치" }, { type: "LG 2단", qty: 2, work: "이전설치" }], note: "3층", website: "" });
+  });
+  await step("같은 번호로 바로 다시 보내면 '1분 뒤' 안내", async () => {
+    await bp.reload();
+    await bp.click("[data-type='통돌이']");
+    await bp.fill("[data-testid=b-date]", TOMORROW);
+    await bp.fill("[data-testid=b-name]", "최고객");
+    await bp.fill("[data-testid=b-phone]", "010-7777-8888");
+    await bp.fill("[data-testid=b-addr]", "주소");
+    await bp.check("[data-testid=b-agree]");
+    await bp.click("[data-testid=b-send]");
+    await bp.waitForFunction(() => !document.querySelector("#e-form").hidden && document.querySelector("#e-form").textContent.includes("1분 뒤"));
+  });
+  await step("고객 페이지 가로 스크롤 없음", async () => {
+    const r = await bp.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]);
+    ok(r[0] <= r[1], r.join(">"));
+  });
+
+  // ---------------- 8. PWA·로그아웃 ----------------
+  console.log("PWA·로그아웃");
+  await step("홈 화면 앱: manifest·아이콘·서비스 워커", async () => {
+    const m = await p.evaluate(async () => {
+      const link = document.querySelector("link[rel=manifest]").href;
+      const j = await (await fetch(link)).json();
+      const icons = await Promise.all(j.icons.map(async (i) => (await fetch(new URL(i.src, link))).status));
+      const reg = await navigator.serviceWorker.getRegistration();
+      return { name: j.name, theme: j.theme_color, display: j.display, sizes: j.icons.map((i) => i.sizes), icons, sw: !!reg, touch: (await fetch(document.querySelector("link[rel=apple-touch-icon]").href)).status };
+    });
+    eq(m.name, "세탁기 크루"); eq(m.theme, "#00419B"); eq(m.display, "standalone");
+    ok(m.sizes.includes("192x192") && m.sizes.includes("512x512"), m.sizes.join());
+    ok(m.icons.every((s) => s === 200) && m.touch === 200, "아이콘");
+    ok(m.sw, "서비스 워커 등록");
+  });
+  await step("CSV 받기: 파일 내려받기", async () => {
+    await p.click("[data-testid=tab-stats]");
+    const [dl] = await Promise.all([p.waitForEvent("download"), p.click("[data-testid=csv]")]);
+    ok(/^washer-crew_\d{4}-\d{2}\.csv$/.test(dl.suggestedFilename()), dl.suggestedFilename());
+    const buf = fs.readFileSync(await dl.path());
+    ok(buf.slice(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf])), "엑셀용 BOM");
+  });
+  await step("로그아웃 → 로그인 화면", async () => {
+    await p.click("[data-testid=me-chip]");
+    await p.click("[data-testid=logout]");
+    await p.waitForSelector("[data-testid=login-신창민]");
+    eq(await p.evaluate(() => sessionStorage.getItem("fakesb.session")), null);
+  });
+  await step("가로 스크롤 없음·콘솔 오류 0건", async () => {
+    const r = await p.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]);
+    ok(r[0] <= r[1], r.join(">"));
+    eq(errors.length, 0, errors.join("\n"));
+  });
+
+  await browser.close();
+  server.close();
+  console.log(`\n${passed} passed, ${failed} failed`);
+  process.exit(failed ? 1 : 0);
+})().catch((e) => { console.error(e); process.exit(1); });

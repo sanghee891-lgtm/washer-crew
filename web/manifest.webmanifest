@@ -1,0 +1,17 @@
+{
+  "name": "세탁기 크루",
+  "short_name": "세탁기 크루",
+  "description": "세탁기·건조기 세척과 이전설치 예약 및 월별 매출 장부",
+  "lang": "ko",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f2f6fc",
+  "theme_color": "#00419B",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

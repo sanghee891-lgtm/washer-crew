@@ -2,6 +2,20 @@
 
 이 문서는 다음 작업 세션이 이어서 진행하기 위한 인수인계 문서다. 사장님(사용자)은 비개발자이고, 휴대폰 위주로 쓰는 직원 5명(연령대 높음)이 쓴다. 안내는 쉬운 한국어로 짧게 한다.
 
+## 진행 상황 (2026-10-22)
+- 완료
+  - Supabase `washer-crew`(ref `ncsxszunxdetpwqnkjhq`): `supabase/migrations/0001_init.sql`, `0002_push.sql` 적용. Vault에 VAPID 키·hook 비밀값 저장. pg_cron `daily-reminder`(09:00 UTC) 등록.
+  - Edge Function `push`(verify_jwt 끔, x-hook-secret 확인), `staff-admin`(사장님 토큰 또는 x-hook-secret) 배포.
+  - 직원 계정 5개 생성. **사장님 = 신창민 `smvivcjg03`** (사용자 확인). 처음 비밀번호는 사용자에게 따로 전달함.
+  - 기존 Artifact 데이터 이전: `config/staff`, 예약 2건. 예전 사진 3장은 GitHub를 거쳐 옮기는 방식이 보안상 막혀 옮기지 않았고, 예약의 photos 값을 null로 바꿈(사용자가 새 앱에서 다시 올리기로).
+  - `web/` 웹앱(로그인·고객 예약 링크·요청 확정/거절·내일 확인 문자·푸시·PWA·CSV) 완성, 테스트 3종 통과.
+  - `supabase/tests/rls_check.sql`로 실제 DB 권한 점검 통과.
+- 남은 일
+  - 사용자가 Cloudflare Pages에서 저장소 연결(출력 폴더 `web`, 빌드 명령 없음).
+  - 배포 주소에서 사장님이 로그인·알림 켜기 확인 → 직원 안내.
+  - 전환하는 날 마지막 데이터 다시 옮기기: `ArtifactData list`로 `reservations`를 다시 읽어 `docs`에 upsert(`on conflict (path) do update`). 예전 예약이 대량으로 들어가도 `push` 함수가 createdAt 10분 이전 예약은 알리지 않음.
+  - (선택) Supabase 대시보드 Authentication → Sign In / Providers에서 "Allow new users to sign up" 끄기. 꺼 두지 않아도 직원 계정(staff_accounts)이 아니면 장부에 접근할 수 없음.
+
 ## 왜 옮기나
 지금 앱은 claude.ai Artifact(https://claude.ai/artifact/Wiyd1f9hP4hDa4E556K6C2)로 돌아간다. 이 구조로는 다음이 불가능하다.
 1. **고객 예약 링크:** 고객이 이름·연락처·주소를 적으면 장부에 자동 반영되어야 한다. 그런데 Artifact는 초대된 사람만 쓸 수 있고, 공개 링크를 켜면 초대된 편집자가 쓰기 권한을 잃는다.

@@ -1,6 +1,6 @@
 // node test/core.test.js
 const assert = require("assert");
-const C = require("../core.js");
+const C = require("../web/core.js");
 
 let passed = 0, failed = 0;
 function t(name, fn) {
@@ -235,6 +235,31 @@ t("PC: 앱 버튼 없이 웹 지도만", () => {
   const l = C.navLinks(ADDR, "other");
   assert.strictEqual(l.apps.length, 0);
   assert.deepStrictEqual(l.web.map(w => w.href), ["https://map.kakao.com/link/search/" + ENC, "https://map.naver.com/p/search/" + ENC]);
+});
+
+console.log("전날 확인 문자");
+t("다음날 날짜(월말·연말 넘김)", () => {
+  assert.strictEqual(C.addDays("2026-10-31", 1), "2026-11-01");
+  assert.strictEqual(C.addDays("2026-12-31", 1), "2027-01-01");
+});
+t("오전·오후 시간 표기", () => {
+  assert.strictEqual(C.timeKo("10:00"), "오전 10시");
+  assert.strictEqual(C.timeKo("13:30"), "오후 1시 30분");
+  assert.strictEqual(C.timeKo("12:00"), "오후 12시");
+  assert.strictEqual(C.timeKo("00:10"), "오전 12시 10분");
+  assert.strictEqual(C.timeKo(""), "");
+});
+t("확인 문자 문구", () => {
+  const r = R({ date: "2026-10-24", time: "10:00", customer: { name: "김민지", phone: "010-1234-5678" }, items: [{ type: "건조기", qty: 1, work: "이전설치" }] });
+  assert.strictEqual(C.reminderText(r), "[세탁기 크루] 김민지 고객님, 내일 10월 24일(토) 오전 10시 건조기 이전설치 예약 확인 드립니다. 변경 있으시면 연락 주세요.");
+});
+t("확인 문자: 이름 없음·기기 여러 개", () => {
+  const r = R({ date: "2026-10-29", time: "09:30", customer: { name: "", phone: "010" }, items: [{ type: "통돌이", qty: 1, work: "세척" }, { type: "건조기", qty: 1, work: "세척" }] });
+  assert.strictEqual(C.reminderText(r), "[세탁기 크루] 고객님, 내일 10월 29일(목) 오전 9시 30분 통돌이·건조기 세척 예약 확인 드립니다. 변경 있으시면 연락 주세요.");
+});
+t("문자 링크: 아이폰 &body, 안드로이드 ?body", () => {
+  assert.strictEqual(C.smsHref("010-1234-5678", "안녕 하세요", "ios"), "sms:01012345678&body=%EC%95%88%EB%85%95%20%ED%95%98%EC%84%B8%EC%9A%94");
+  assert.strictEqual(C.smsHref("010-1234-5678", "a&b", "android"), "sms:01012345678?body=a%26b");
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
