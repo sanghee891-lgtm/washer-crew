@@ -8,7 +8,14 @@
   var TYPES = ["통돌이", "삼성 2단", "LG 2단", "빌트인", "건조기", "세탁기"];
   var WORKS = ["세척", "이전설치", "철거", "기타"];
   var PAY_METHODS = ["미정", "현금", "카드", "계좌이체"];
-  var STATUS = { scheduled: "예약", done: "완료", canceled: "취소" };
+  // 저장되는 상태값. "직원 배정"·"입금 완료"는 인원·입금 여부로 계산(stageOf)
+  var STATUS = { scheduled: "확정", moving: "이동 중", working: "작업 중", done: "완료", canceled: "취소" };
+  // 화면에 보이는 진행 단계: 예약 요청 → 확정 → 직원 배정 → 이동 중 → 작업 중 → 작업 완료 → 입금 완료
+  var STAGES = [
+    { key: "request", label: "예약 요청" }, { key: "confirmed", label: "확정" }, { key: "assigned", label: "직원 배정" },
+    { key: "moving", label: "이동 중" }, { key: "working", label: "작업 중" }, { key: "done", label: "작업 완료" }, { key: "paid", label: "입금 완료" }
+  ];
+  var NEXT = { scheduled: { s: "moving", label: "이동 시작" }, moving: { s: "working", label: "작업 시작" }, working: { s: "done", label: "작업 완료" } };
   var WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 
   function pad(n) { return (n < 10 ? "0" : "") + n; }
@@ -196,6 +203,25 @@
   }
 
   function isPaid(r) { return !!(r.payment && r.payment.paid); }
+
+  // ---- 진행 단계 ----
+  // crewCount: 지금 명단에 있는 참여 직원 수(없으면 workers 의 true 개수)
+  function stageOf(r, crewCount) {
+    if (!r || r.status === "canceled") return { key: "canceled", label: "취소", step: -1 };
+    var key = r.status === "done" ? (isPaid(r) ? "paid" : "done")
+      : r.status === "moving" || r.status === "working" ? r.status
+      : ((crewCount == null ? assignedWorkers(r).length : crewCount) >= (+r.needed || 2) ? "assigned" : "confirmed");
+    for (var i = 0; i < STAGES.length; i++) if (STAGES[i].key === key) return { key: key, label: STAGES[i].label, step: i };
+    return { key: key, label: "", step: 0 };
+  }
+  function nextStatus(r) { return r ? NEXT[r.status] || null : null; }
+  // 상태 변경 기록(log: {키: {s, by, at}})을 시간순으로
+  function statusLog(r) {
+    var log = (r && r.log) || {};
+    return Object.keys(log).map(function (k) { return log[k]; }).filter(function (e) { return e && e.s && e.at; })
+      .sort(function (a, b) { return a.at < b.at ? -1 : a.at > b.at ? 1 : 0; });
+  }
+  var LOG_LABEL = { scheduled: "확정", moving: "이동 시작", working: "작업 시작", done: "작업 완료", paid: "입금 확인", unpaid: "입금 확인 취소", canceled: "취소", request: "고객 예약 요청" };
 
   // ---- 집계 ----
   // 매출 기준: 완료 매출(확정) + 예정 매출(상태 '예약'), 취소 제외. 미수금 = 완료됐지만 입금 미확인.
@@ -400,6 +426,7 @@
   return {
     NAV_APPS: NAV_APPS, detectPlatform: detectPlatform, navLinks: navLinks,
     TYPES: TYPES, WORKS: WORKS, PAY_METHODS: PAY_METHODS, STATUS: STATUS, WEEKDAYS: WEEKDAYS,
+    STAGES: STAGES, LOG_LABEL: LOG_LABEL, stageOf: stageOf, nextStatus: nextStatus, statusLog: statusLog,
     pad: pad, toMin: toMin, endTime: endTime, durationLabel: durationLabel,
     assignedWorkers: assignedWorkers, overlaps: overlaps, findConflicts: findConflicts,
     todayStr: todayStr, ymOf: ymOf, addMonths: addMonths, monthRange: monthRange, yearRange: yearRange,

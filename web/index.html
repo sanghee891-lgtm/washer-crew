@@ -109,6 +109,13 @@ button { cursor: pointer; }
 .sum-strip .s b { display: block; font-size: 18px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sum-strip .s.warn { background: var(--warn-soft); border-color: transparent; }
 .sum-strip .s.warn b, .sum-strip .s.warn small { color: var(--warn); }
+/* 로그인한 웹앱: 역할별 요약 칸(누르면 해당 목록) */
+.sum-strip.tiles-3, .sum-strip.tiles-4 { display: grid; gap: 6px; flex-basis: 100%; }
+.sum-strip.tiles-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.sum-strip.tiles-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.sum-strip [data-tile] { cursor: pointer; }
+.sum-strip .s.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+@media (min-width: 640px) { .sum-strip.tiles-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 
 /* ---------- 탭 ---------- */
 .tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 25; display: grid; grid-template-columns: repeat(4, 1fr);
@@ -200,6 +207,34 @@ main { padding-block: 10px 24px; }
 .btn.danger.solid { background: var(--bad); border-color: var(--bad); color: #fff; }
 .btn:disabled { opacity: .5; cursor: default; }
 .c-warn { font-size: 13px; font-weight: 600; color: var(--bad); background: var(--bad-soft); border-radius: 8px; padding: 5px 8px; }
+/* 카드 앞면 버튼·펼침 영역 */
+.c-chev { margin-left: auto; color: var(--ink-3); display: grid; transition: transform .15s; }
+.c-chev svg { width: 20px; height: 20px; }
+.card.open .c-chev { transform: rotate(180deg); }
+.c-quick { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 6px; }
+.qb { min-height: 56px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); font-weight: 700; font-size: 13.5px; color: var(--ink); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; padding: 4px; white-space: nowrap; min-width: 0; }
+.qb svg { width: 20px; height: 20px; color: var(--accent); flex: none; }
+.qb span { overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.c-steps { display: flex; gap: 6px; flex-wrap: wrap; }
+.c-steps .btn { flex: 1; min-height: 44px; font-size: 15px; }
+.c-more { display: grid; gap: 8px; border-top: 1px solid var(--line); padding-top: 10px; }
+.c-moneyrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.c-moneyrow .c-amt { margin-left: 0; }
+.c-moneyrow .c-pay { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; color: var(--ink-2); }
+.c-note { font-size: 14px; color: var(--ink-2); white-space: pre-wrap; word-break: keep-all; }
+.c-note b { color: var(--ink); margin-right: 4px; }
+.pill.stg-confirmed { background: var(--accent-soft); color: var(--accent); }
+.pill.stg-assigned { background: var(--accent); color: var(--accent-ink); }
+.pill.stg-moving, .pill.stg-working { background: var(--warn-soft); color: var(--warn); }
+.pill.stg-done { background: var(--good-soft); color: var(--good); }
+.pill.stg-paid { background: var(--good); color: #fff; }
+.pill.stg-canceled { background: var(--surface-2); color: var(--ink-3); }
+.stepper { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; font-size: 12.5px; }
+.stepper li { padding: 3px 8px; border-radius: 999px; background: var(--surface-2); color: var(--ink-3); font-weight: 600; }
+.stepper li.past { color: var(--ink-2); }
+.stepper li.now { background: var(--accent); color: var(--accent-ink); }
+.stepper.canceled { font-size: 13px; color: var(--ink-3); font-weight: 600; }
+.c-log { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-size: 13px; color: var(--ink-3); }
 .card.st-canceled { opacity: .6; }
 .card.st-canceled .c-name, .card.st-canceled .c-amt { text-decoration: line-through; }
 .card.st-done .c-time { background: var(--good-soft); }

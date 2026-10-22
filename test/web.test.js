@@ -293,6 +293,38 @@ const ACCOUNTS = [
     await p.waitForFunction(() => JSON.parse(localStorage.getItem("fakesb")).accounts.find((a) => a.staffId === "smvivcjg01").pin === "987654");
   });
 
+  // ---------------- 역할별 첫 화면·카드·진행 단계 ----------------
+  console.log("역할별 첫 화면·카드·진행 단계");
+  await step("개발자 계정: 새 예약 요청·인원 부족·미수금·월 매출 칸 → 누르면 그 목록", async () => {
+    await p.click("[data-testid=tab-list]");
+    for (const k of ["reqs", "open", "unpaid", "revenue"]) ok(await p.isVisible(`[data-testid=tile-${k}]`), "칸 " + k);
+    await p.click("[data-testid=tile-open]");
+    eq(await p.getAttribute("[data-testid=filter-open]", "aria-pressed"), "true");
+    await p.click("[data-testid=tile-open]");
+    eq(await p.getAttribute("[data-testid=filter-all]", "aria-pressed"), "true");
+  });
+  const kimCard = () => p.locator("[data-testid=card]", { hasText: "남의고객" });
+  await step("카드는 접혀 있고, 누르면 금액·주소가 펼쳐짐", async () => {
+    ok(await kimCard().locator("[data-testid=card-more]").isHidden(), "처음엔 접힘");
+    for (const b of ["detail", "nav"]) ok(await kimCard().locator(`[data-testid=${b}]`).isVisible(), "앞면 버튼 " + b);
+    await kimCard().locator(".c-name").click();
+    await kimCard().locator("[data-testid=card-more]").waitFor();
+    ok((await kimCard().locator("[data-testid=card-more]").innerText()).includes("50,000원"));
+  });
+  await step("진행 단계: 이동 시작 → 작업 시작 → 작업 완료, 누가·언제 기록", async () => {
+    eq(await kimCard().locator("[data-testid=stage]").innerText(), "확정");
+    for (const [btn, label] of [["이동 시작", "이동 중"], ["작업 시작", "작업 중"], ["작업 완료", "작업 완료"]]) {
+      eq(await kimCard().locator("[data-testid=next-stage]").innerText(), btn);
+      await kimCard().locator("[data-testid=next-stage]").click();
+      await p.waitForFunction((l) => [...document.querySelectorAll("[data-testid=card]")].some((c) => c.textContent.includes("남의고객") && c.querySelector("[data-testid=stage]").textContent === l), label);
+    }
+    const log = Object.values((await fakeDb(p)).docs["reservations/r_kim"].log);
+    eq(log.map((e) => e.s).sort(), ["done", "moving", "working"]);
+    ok(log.every((e) => e.by === "smvivcjg03" && e.at), "변경한 사람·시각");
+    await kimCard().locator("[data-testid=status-log]").waitFor();
+    ok((await kimCard().locator("[data-testid=status-log]").innerText()).includes("이동 시작 · 신창민"));
+  });
+
   // ---------------- 6. 사진(비공개 보관함) ----------------
   console.log("사진");
   const tinyJpeg = Buffer.from("/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=", "base64");
@@ -310,9 +342,15 @@ const ACCOUNTS = [
     await p.click("[data-pclose]");
   });
   const p2 = await webPage(ctx, { session: "u-park", label: "park" }); // 같은 기기(저장소 공유), 다른 탭에서 다른 직원
+  await step("직원: 오늘 일정·내 작업·미배정 칸이 먼저", async () => {
+    await p2.waitForSelector("[data-testid=tile-today]");
+    for (const k of ["today", "mine", "open"]) ok(await p2.isVisible(`[data-testid=tile-${k}]`), "칸 " + k);
+    eq(await p2.locator("[data-testid=tile-revenue]").count(), 0, "직원에겐 매출 칸 없음");
+    eq((await p2.locator("#filters .chip").first().innerText()).replace(/\s+\d+$/, ""), "오늘");
+  });
   await step("다른 직원: 남이 넣은 예약은 보기만, 직원 명단은 사장님만", async () => {
     await p2.waitForSelector("[data-testid=card]");
-    await p2.locator("[data-testid=card]", { hasText: "남의고객" }).click();
+    await p2.locator("[data-testid=card]", { hasText: "남의고객" }).locator("[data-act=detail]").click();
     await p2.waitForSelector("[data-testid=readonly-note]");
     await p2.click("[data-testid=close-view]");
     await p2.click("[data-testid=tab-settings]");

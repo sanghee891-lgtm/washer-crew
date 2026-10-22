@@ -262,5 +262,31 @@ t("문자 링크: 아이폰 &body, 안드로이드 ?body", () => {
   assert.strictEqual(C.smsHref("010-1234-5678", "a&b", "android"), "sms:01012345678?body=a%26b");
 });
 
+console.log("진행 단계");
+t("확정 → 직원 배정(인원 충족) → 이동·작업 → 완료 → 입금", () => {
+  assert.strictEqual(C.stageOf(R({ needed: 2, workers: { a: true } })).label, "확정");
+  assert.strictEqual(C.stageOf(R({ needed: 2, workers: { a: true, b: true } })).label, "직원 배정");
+  assert.strictEqual(C.stageOf(R({ needed: 2, workers: { a: true, b: true } }), 1).key, "confirmed", "명단에 있는 직원 수 기준");
+  assert.strictEqual(C.stageOf(R({ status: "moving" })).label, "이동 중");
+  assert.strictEqual(C.stageOf(R({ status: "working" })).label, "작업 중");
+  assert.strictEqual(C.stageOf(R({ status: "done" })).label, "작업 완료");
+  assert.strictEqual(C.stageOf(R({ status: "done", payment: { paid: true } })).label, "입금 완료");
+  assert.strictEqual(C.stageOf(R({ status: "canceled" })).key, "canceled");
+});
+t("다음 단계 버튼", () => {
+  assert.deepStrictEqual(C.nextStatus(R({ status: "scheduled" })), { s: "moving", label: "이동 시작" });
+  assert.strictEqual(C.nextStatus(R({ status: "working" })).s, "done");
+  assert.strictEqual(C.nextStatus(R({ status: "done" })), null);
+});
+t("상태 기록은 시간순", () => {
+  const l = C.statusLog(R({ log: { b: { s: "working", by: "x", at: "2026-10-22T02:00:00Z" }, a: { s: "moving", by: "x", at: "2026-10-22T01:00:00Z" }, z: null } }));
+  assert.deepStrictEqual(l.map((e) => e.s), ["moving", "working"]);
+});
+t("이동 중·작업 중은 예정 매출로 집계", () => {
+  const s = C.summarize([R({ status: "moving", total: 10000 }), R({ status: "working", total: 20000 }), R({ status: "done", total: 5000 })]);
+  assert.strictEqual(s.scheduledRevenue, 30000);
+  assert.strictEqual(s.doneRevenue, 5000);
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

@@ -71,7 +71,9 @@
     camera: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.5"/></svg>',
     gallery: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="15" height="13" rx="2"/><path d="M6 21h13a2 2 0 0 0 2-2V8"/><path d="M3 15l4-4 4 4 2-2 5 5"/><circle cx="13.5" cy="9" r="1.5"/></svg>',
     pin: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>',
-    close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>'
+    close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+    doc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l5 5v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5M9 13h7M9 17h5"/></svg>',
+    chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>'
   };
 
   // ---------------- 토스트·모달 ----------------
@@ -225,7 +227,7 @@
       var fresh = !reqFirst && S.reqs.some(function (q) { return prev.indexOf(q.id) < 0; });
       reqFirst = false;
       if (fresh) toast("고객 예약 요청이 들어왔어요.", { label: "보기", run: openRequests });
-      renderBanner();
+      renderTop(); renderBanner();
       if (REQ.open) renderRequests();
     });
     if (S.push) refreshPushState();
@@ -420,6 +422,7 @@
       moveTo: { address: q.moveTo || "", floor: "", elevator: "" },
       items: items.length ? items : undefined,
       note: ["고객 예약 요청", q.timeSlot ? "희망 시간: " + q.timeSlot : "", q.note].filter(Boolean).join("\n"),
+      requestedAt: q.createdAt,
       fromRequest: q.id
     };
   }
@@ -602,14 +605,43 @@
     document.documentElement.style.setProperty("--top-h", h + "px");
   }
 
+  // 목록 필터별 건수(이번 달 기준). 위쪽 요약 칸과 필터 칩이 같은 숫자를 씀
+  function counts() {
+    var ml = monthList(), today = C.todayStr();
+    return {
+      all: ml.length,
+      today: ml.filter(function (r) { return r.date === today; }).length,
+      mine: ml.filter(function (r) { return S.myStaffId && r.workers && r.workers[S.myStaffId] === true && r.status !== "canceled"; }).length,
+      open: ml.filter(function (r) { return r.status === "scheduled" && crew(r).length < (r.needed || 2); }).length,
+      unpaid: ml.filter(function (r) { return r.status === "done" && !C.isPaid(r) && C.parseWon(r.total) > 0; }).length
+    };
+  }
+  // 로그인한 웹앱: 직원은 오늘·내 작업·미배정, 관리 계정(신창민)은 새 요청·인원 부족·미수금·월 매출을 먼저
+  function roleTiles(s) {
+    var n = counts();
+    var tile = function (key, label, val, act, warn) {
+      return '<span class="s' + (warn ? " warn" : "") + (S.tab === "list" && S.filter === key ? " on" : "") + '" role="button" tabindex="0" data-tile="' + act + '" data-testid="tile-' + key + '"><small>' + label + '</small><b class="num">' + val + "</b></span>";
+    };
+    if (S.isOwner) {
+      return tile("reqs", "새 예약 요청", S.reqs.length + "건", "reqs", S.reqs.length > 0) +
+        tile("open", "인원 부족", n.open + "건", "open", n.open > 0) +
+        tile("unpaid", "미수금", C.formatWon(s.unpaid) + "원", "unpaid", s.unpaid > 0) +
+        tile("revenue", "월 매출", C.formatWon(s.totalRevenue) + "원", "stats");
+    }
+    return tile("today", "오늘 일정", n.today + "건", "today") + tile("mine", "내 작업", n.mine + "건", "mine") + tile("open", "미배정", n.open + "건", "open", n.open > 0);
+  }
   function renderTop() {
     $("#monthLabel").textContent = C.ymLabel(S.ym);
     var s = C.summarize(C.filterMonth(list(), S.ym));
-    var html =
-      '<span class="s"><small>예약</small><b class="num" data-testid="top-count">' + s.count + "건</b></span>" +
-      '<span class="s"><small>매출(완료+예정)</small><b class="num" data-testid="top-revenue">' + C.formatWon(s.totalRevenue) + "원</b></span>";
-    if (s.unpaid > 0) html += '<span class="s warn"><small>미수금</small><b class="num">' + C.formatWon(s.unpaid) + "원</b></span>";
+    var html;
+    if (S.fixedStaff) html = roleTiles(s);
+    else {
+      html = '<span class="s"><small>예약</small><b class="num" data-testid="top-count">' + s.count + "건</b></span>" +
+        '<span class="s"><small>매출(완료+예정)</small><b class="num" data-testid="top-revenue">' + C.formatWon(s.totalRevenue) + "원</b></span>";
+      if (s.unpaid > 0) html += '<span class="s warn"><small>미수금</small><b class="num">' + C.formatWon(s.unpaid) + "원</b></span>";
+    }
     $("#sumStrip").innerHTML = html;
+    $("#sumStrip").classList.toggle("tiles-" + (S.isOwner ? 4 : 3), !!S.fixedStaff);
     var me = staffName(S.myStaffId);
     $("#meName").textContent = me ? me + "님" : "이름 선택";
     $("#meChip").classList.toggle("none", !me);
@@ -677,16 +709,11 @@
   }
 
   function renderList() {
-    var ml = monthList();
-    var today = C.todayStr();
-    var cnt = {
-      all: ml.length,
-      today: ml.filter(function (r) { return r.date === today; }).length,
-      mine: ml.filter(function (r) { return S.myStaffId && r.workers && r.workers[S.myStaffId] === true && r.status !== "canceled"; }).length,
-      open: ml.filter(function (r) { return r.status === "scheduled" && crew(r).length < (r.needed || 2); }).length,
-      unpaid: ml.filter(function (r) { return r.status === "done" && !C.isPaid(r) && C.parseWon(r.total) > 0; }).length
-    };
+    var cnt = counts();
     var fs = [["all", "전체"], ["today", "오늘"], ["mine", "내 일정"], ["open", "인원 부족"], ["unpaid", "미수금"]];
+    if (S.fixedStaff) fs = S.isOwner
+      ? [["all", "전체"], ["open", "인원 부족"], ["unpaid", "미수금"], ["today", "오늘"], ["mine", "내 작업"]]
+      : [["today", "오늘"], ["mine", "내 작업"], ["open", "미배정"], ["all", "전체"], ["unpaid", "미수금"]];
     $("#filters").innerHTML = fs.map(function (f) {
       return '<button class="chip" data-filter="' + f[0] + '" aria-pressed="' + (S.filter === f[0]) + '" data-testid="filter-' + f[0] + '">' +
         f[1] + ' <span class="n num">' + cnt[f[0]] + "</span></button>";
@@ -762,11 +789,18 @@
     }).join(" / ");
   }
 
+  // 휴대폰 카드: 앞면은 시간·고객·작업·기기·인원·단계와 전화/길 안내/예약 상세, 주소·금액·메모는 눌러서 펼침
+  var OPEN = {};
+  function stageOf(r) { return C.stageOf(r, crew(r).length); }
+  function stagePill(r) {
+    var st = stageOf(r);
+    return '<span class="pill stg-' + st.key + '" data-testid="stage">' + esc(st.label) + "</span>";
+  }
   function cardHtml(r, cf) {
     var c = r.customer || {};
     var p = r.payment || {};
     var today = C.todayStr();
-    var acts = quickActs(r, today);
+    var open = !!OPEN[r.id];
     var pay = "";
     if (r.status !== "canceled") {
       var paid = C.isPaid(r);
@@ -774,19 +808,53 @@
         "<span>" + esc(p.method && p.method !== "미정" ? p.method : "결제방법 미정") + "</span>";
     }
     var models = C.modelsSummary(r.items);
-    return '<article class="card st-' + esc(r.status) + '" data-id="' + esc(r.id) + '" data-testid="card" tabindex="0">' +
+    var hasAddr = !!(c.address || (r.moveTo || {}).address);
+    var quick = '<div class="c-quick">' +
+      (c.phone ? '<button class="qb" data-act="phone" data-testid="call">' + ICON.phone + "전화</button>" : "") +
+      (hasAddr ? '<button class="qb" data-act="nav" data-testid="nav">' + ICON.pin + "길 안내</button>" : "") +
+      photoBtn(r, "qb") +
+      '<button class="qb" data-act="detail" data-testid="detail">' + ICON.doc + "예약 상세</button></div>";
+    return '<article class="card st-' + esc(r.status) + (open ? " open" : "") + '" data-id="' + esc(r.id) + '" data-testid="card" tabindex="0" aria-expanded="' + open + '">' +
       '<div class="c-time num"><b>' + esc(r.time) + "</b><span>~" + esc(C.endTime(r.time, r.durationMin).replace(" (다음날)", "+1")) + '</span><span class="dur">' + C.durationLabel(r.durationMin) + "</span></div>" +
       '<div class="c-main">' +
-        '<div class="c-r1"><span class="c-name">' + esc(c.name || C.formatPhone(c.phone) || "이름 없음") + "</span>" + (isNew(r) ? '<span class="pill new" data-testid="new-badge">NEW</span>' : "") + '<span class="pill ' + esc(r.status) + '">' + (C.STATUS[r.status] || "") + '</span><span class="c-amt num" data-testid="card-amt">' + C.formatWon(r.total) + "원</span></div>" +
-        '<div class="c-items">' + esc(C.itemsSummary(r.items)) + ' <span class="w">' + esc(C.worksSummary(r.items)) + (models ? " · " + esc(models) : "") + "</span></div>" +
-        '<div class="c-links">' +
-          (c.phone ? '<button class="lk" data-act="phone">' + ICON.phone + '<span class="num">' + esc(C.formatPhone(c.phone)) + "</span></button>" : "") +
-          addrLinks(r) + photoBtn(r) +
-        "</div>" +
-        (pay ? '<div class="c-pay">' + pay + "</div>" : "") +
+        '<div class="c-r1"><span class="c-name">' + esc(c.name || C.formatPhone(c.phone) || "이름 없음") + "</span>" + (isNew(r) ? '<span class="pill new" data-testid="new-badge">NEW</span>' : "") +
+          stagePill(r) + '<span class="c-chev" aria-hidden="true">' + ICON.chev + "</span></div>" +
+        '<div class="c-items"><span class="w">' + esc(C.worksSummary(r.items)) + "</span> · " + esc(C.itemsSummary(r.items)) + "</div>" +
+        '<div class="c-crew">' + crewHtml(r) + "</div>" +
         (cf ? '<div class="c-warn" data-testid="conflict">' + esc(conflictText(r, cf)) + "</div>" : "") +
-        '<div class="c-crew">' + crewHtml(r) + '<span class="c-act">' + acts + "</span></div>" + rsvpHtml(r) +
+        quick + stepActs(r, today) + rsvpHtml(r) +
+        '<div class="c-more"' + (open ? "" : " hidden") + ' data-testid="card-more">' +
+          '<div class="c-moneyrow"><span class="c-amt num" data-testid="card-amt">' + C.formatWon(r.total) + "원</span>" + (pay ? '<span class="c-pay">' + pay + "</span>" : "") + "</div>" +
+          '<div class="c-links">' +
+            (c.phone ? '<button class="lk" data-act="phone">' + ICON.phone + '<span class="num">' + esc(C.formatPhone(c.phone)) + "</span></button>" : "") +
+            addrLinks(r) +
+          "</div>" +
+          (models ? '<div class="c-note"><b>모델</b> ' + esc(models) + "</div>" : "") +
+          (r.note ? '<div class="c-note"><b>메모</b> ' + esc(r.note) + "</div>" : "") +
+          ((r.site || {}).memo ? '<div class="c-note"><b>현장</b> ' + esc(r.site.memo) + "</div>" : "") +
+          stepperHtml(r) + logHtml(r) +
+        "</div>" +
       "</div></article>";
+  }
+
+  // 진행 단계 표시(확정 › 직원 배정 › 이동 중 › 작업 중 › 작업 완료 › 입금 완료)
+  function stepperHtml(r) {
+    var st = stageOf(r);
+    if (st.key === "canceled") return '<div class="stepper canceled">취소된 예약</div>';
+    return '<ol class="stepper" aria-label="진행 단계">' + C.STAGES.slice(1).map(function (g) {
+      var i = C.STAGES.indexOf(g);
+      return '<li class="' + (i < st.step ? "past" : i === st.step ? "now" : "") + '">' + esc(g.label) + "</li>";
+    }).join("") + "</ol>";
+  }
+  // 누가 언제 단계를 바꿨는지(전화 확인·인계용)
+  function logHtml(r) {
+    var rows = [];
+    if (r.createdAt) rows.push({ s: "created", by: r.createdBy, at: r.createdAt });
+    rows = rows.concat(C.statusLog(r));
+    if (!rows.length) return "";
+    return '<ul class="c-log" data-testid="status-log">' + rows.map(function (e) {
+      return "<li><span class=\"num\">" + esc(fmtStamp(e.at)) + "</span> " + esc(e.s === "created" ? "등록" : C.LOG_LABEL[e.s] || e.s) + (staffName(e.by) ? " · " + esc(staffName(e.by)) : "") + "</li>";
+    }).join("") + "</ul>";
   }
 
   // 이전설치면 출발지 → 도착지 두 개, 아니면 주소 하나
@@ -798,12 +866,20 @@
     }
     return c.address ? '<button class="lk" data-act="addr">' + ICON.pin + "<span>" + esc(c.address) + "</span></button>" : "";
   }
-  function photoBtn(r) {
+  function photoBtn(r, cls) {
     var n = C.photoCounts(r).total;
     if (!n && !(S.assets && canWrite())) return "";
-    return '<button class="lk" data-act="photos" data-testid="photos-btn">' + ICON.camera + '<span class="num">' + (n ? "사진 " + n : "사진 추가") + "</span></button>";
+    return '<button class="' + (cls || "lk") + '" data-act="photos" data-testid="photos-btn">' + ICON.camera + '<span class="num">' + (n ? "사진 " + n : cls ? "사진" : "사진 추가") + "</span></button>";
   }
 
+  // 다음 단계(이동 시작·작업 시작·작업 완료)는 누구나, 입금확인은 넣은 사람·사장님만
+  function stepActs(r, today) {
+    if (!canWrite() || r.status === "canceled") return "";
+    var nx = C.nextStatus(r), out = "";
+    if (nx) out += '<button class="btn primary" data-act="stage" data-v="' + nx.s + '" data-testid="next-stage">' + esc(nx.label) + "</button>";
+    out += quickActs(r, today);
+    return out ? '<div class="c-steps">' + out + "</div>" : "";
+  }
   // 완료는 누구나, 입금확인은 예약을 넣은 사람·사장님만
   function quickActs(r, today) {
     var acts = "";
@@ -833,7 +909,7 @@
       }
       var c = r.customer || {}, p = r.payment || {};
       var cf = conflicts[r.id];
-      var acts = rsvpHtml(r) + quickActs(r, today);
+      var acts = rsvpHtml(r) + stepActs(r, today);
       out += '<tr class="row st-' + esc(r.status) + '" data-id="' + esc(r.id) + '" data-testid="card">' +
         '<td class="nowrap num"><b>' + esc(r.time) + "</b>~" + esc(C.endTime(r.time, r.durationMin)) + '<span class="sub">' + C.durationLabel(r.durationMin) + "</span></td>" +
         '<td class="cust"><b>' + esc(c.name || "") + "</b>" +
@@ -843,7 +919,7 @@
         "<td>" + itemsCell(r) + "</td>" +
         '<td class="r nowrap num"><b data-testid="card-amt">' + C.formatWon(r.total) + '원</b><span class="sub">' + esc(p.method || "미정") + " · " +
           (r.status === "canceled" ? "" : C.isPaid(r) ? "입금완료" : r.status === "done" ? '<span style="color:var(--warn)">미수금</span>' : "입금 전") + "</span></td>" +
-        '<td><span class="pill ' + esc(r.status) + '">' + (C.STATUS[r.status] || "") + "</span></td>" +
+        "<td>" + stagePill(r) + "</td>" +
         '<td><div class="chips">' + crewHtml(r) + "</div></td>" +
         '<td class="acts">' + acts + "</td></tr>";
     });
@@ -1153,7 +1229,16 @@
     $("#prevM").onclick = function () { setMonth(C.addMonths(S.ym, -1)); };
     $("#nextM").onclick = function () { setMonth(C.addMonths(S.ym, 1)); };
     $("#todayBtn").onclick = function () { setMonth(C.ymOf(C.todayStr())); };
-    $("#sumStrip").onclick = function () { setTab("stats"); };
+    $("#sumStrip").onclick = function (e) {
+      var t = e.target.closest("[data-tile]");
+      if (!t) { setTab("stats"); return; }
+      var k = t.getAttribute("data-tile");
+      if (k === "stats") { setTab("stats"); return; }
+      if (k === "reqs") { openRequests(); return; }
+      if (S.tab !== "list") setTab("list");
+      S.filter = S.filter === k ? "all" : k;
+      if (S.filter === "today" && S.ym !== C.ymOf(C.todayStr())) setMonth(C.ymOf(C.todayStr())); else render();
+    };
     $("#fab").onclick = function () { openForm(null); };
     $("#meChip").onclick = function () {
       if (S.fixedStaff) { openAccount(); return; }
@@ -1203,6 +1288,9 @@
       if (a === "addr" && r) return addrSheet(r);
       if (a === "addr2" && r) return addrSheet(r, true);
       if (a === "photos" && r) return openPhotos(r.id);
+      if (a === "detail" && r) return openForm(r.id);
+      if (a === "nav" && r) return navSheet(r);
+      if (a === "stage" && r) return setStage(r, act.getAttribute("data-v"));
       if (a === "seen-all") { markAllSeen(); render(); return; }
       if (a === "csv") return exportCsv(false);
       if (a === "csv-year") return exportCsv(true);
@@ -1224,7 +1312,10 @@
       if (a === "acct-rm") return acctRemove(act.getAttribute("data-sid"));
       return;
     }
-    if (host && r) openForm(r.id);
+    if (host && r) {
+      if (host.tagName === "ARTICLE") { OPEN[r.id] = !OPEN[r.id]; if (OPEN[r.id]) markSeen(r.id); renderBody(); }
+      else openForm(r.id);
+    }
   }
 
   function needMe(then) {
@@ -1248,18 +1339,43 @@
     } catch (e) { toast(writeError(e)); }
   }
 
-  async function quickStatus(r) {
+  // 단계 기록: log 맵에 {상태, 누가, 언제}를 하나씩 더함(동시에 눌러도 서로 지워지지 않음)
+  function logPatch(patch, s) {
+    var at = nowIso();
+    patch.log = {};
+    patch.log[Date.now().toString(36) + "_" + (S.myStaffId || "x")] = { s: s, by: S.myStaffId || "", at: at };
+    return patch;
+  }
+  var stageBusy = {};
+  async function setStage(r, s, undo) {
+    if (stageBusy[r.id]) return;
+    stageBusy[r.id] = true;
     var prev = r.status;
+    toast("저장 중…");
     try {
-      await S.db.doc("reservations/" + r.id).update({ status: "done", updatedBy: S.myStaffId || "", updatedAt: nowIso() });
-      toast("완료로 바꿨어요.", { label: "되돌리기", run: function () { S.db.doc("reservations/" + r.id).update({ status: prev }).catch(function (e) { toast(writeError(e)); }); } });
-    } catch (e) { toast(writeError(e)); }
+      await S.db.doc("reservations/" + r.id).update(logPatch({ status: s, updatedBy: S.myStaffId || "", updatedAt: nowIso() }, s));
+      if (undo) toast(C.STATUS[s] + "(으)로 되돌렸어요.");
+      else toast((C.LOG_LABEL[s] || C.STATUS[s]) + " 저장했어요.", { label: "되돌리기", run: function () { setStage(S.all[r.id] || r, prev, true); } });
+    } catch (e) { toast("저장 실패 · " + writeError(e)); }
+    finally { stageBusy[r.id] = false; }
+  }
+  function quickStatus(r) {
+    return setStage(r, "done");
   }
   async function quickPaid(r) {
     try {
-      await S.db.doc("reservations/" + r.id).update({ payment: { paid: true }, updatedBy: S.myStaffId || "", updatedAt: nowIso() });
-      toast("입금 확인했어요.", { label: "되돌리기", run: function () { S.db.doc("reservations/" + r.id).update({ payment: { paid: false } }).catch(function (e) { toast(writeError(e)); }); } });
-    } catch (e) { toast(writeError(e)); }
+      await S.db.doc("reservations/" + r.id).update(logPatch({ payment: { paid: true }, updatedBy: S.myStaffId || "", updatedAt: nowIso() }, "paid"));
+      toast("입금 확인했어요.", { label: "되돌리기", run: function () { S.db.doc("reservations/" + r.id).update(logPatch({ payment: { paid: false } }, "unpaid")).catch(function (e) { toast(writeError(e)); }); } });
+    } catch (e) { toast("저장 실패 · " + writeError(e)); }
+  }
+  // 길 안내: 이전설치면 출발지·도착지 중 고르기
+  function navSheet(r) {
+    var c = r.customer || {}, to = r.moveTo || {};
+    if (!(C.isMove(r) && c.address && to.address)) return addrSheet(r, !c.address && !!to.address);
+    openModal("<h2>어디로 갈까요?</h2>" +
+      '<button class="btn primary wide" data-go="from" data-testid="nav-from">출발지 (철거하는 곳)</button><p class="muted" style="margin-top:-6px">' + esc(c.address) + "</p>" +
+      '<button class="btn primary wide" data-go="to" data-testid="nav-to">도착지 (설치하는 곳)</button><p class="muted" style="margin-top:-6px">' + esc(to.address) + "</p>",
+      function (e) { var g = e.target.closest("[data-go]"); if (g) addrSheet(r, g.getAttribute("data-go") === "to"); });
   }
 
   function copyText(text, okMsg) {
@@ -1367,7 +1483,7 @@
     if (id && !r) return;
     if (id) markSeen(id);
     var data = r ? clone(r) : blank(date);
-    if (prefill) Object.keys(prefill).forEach(function (k) { if (k !== "fromRequest" && prefill[k] !== undefined) data[k] = clone({ v: prefill[k] }).v; });
+    if (prefill) Object.keys(prefill).forEach(function (k) { if (k !== "fromRequest" && k !== "requestedAt" && prefill[k] !== undefined) data[k] = clone({ v: prefill[k] }).v; });
     delete data.id;
     data.customer = Object.assign({ name: "", phone: "", address: "" }, data.customer);
     data.site = Object.assign({ floor: "", elevator: "", parking: "", memo: "" }, data.site);
@@ -1375,7 +1491,7 @@
     data.payment = Object.assign({ method: "미정", paid: false }, data.payment);
     data.workers = data.workers || {};
     if (!Array.isArray(data.items) || !data.items.length) data.items = [{ type: "통돌이", model: "", qty: 1, work: "세척" }];
-    F = { readOnly: !!(r && !canEditRes(r)), id: id, data: data, orig: r ? clone(r) : null, openedAt: r ? r.updatedAt || r.createdAt || "" : "", errors: {}, staleOk: false, confirmDel: false, hist: null, histFor: "", fromRequest: (prefill && prefill.fromRequest) || null };
+    F = { readOnly: !!(r && !canEditRes(r)), id: id, data: data, orig: r ? clone(r) : null, openedAt: r ? r.updatedAt || r.createdAt || "" : "", errors: {}, staleOk: false, confirmDel: false, hist: null, histFor: "", fromRequest: (prefill && prefill.fromRequest) || null, requestedAt: (prefill && prefill.requestedAt) || null };
     renderForm();
     $("#sheet").hidden = false;
     document.body.style.overflow = "hidden";
@@ -1446,7 +1562,7 @@
           }).join("") : '<span class="muted">직원·설정에서 명단을 먼저 넣어 주세요.</span>') + "</div></div>" +
       "</div>" +
 
-      '<div class="fs"><h3>상태</h3>' + chipGroup("status", ["scheduled", "done", "canceled"], d.status, ["예약", "완료", "취소"]) + "</div>" +
+      '<div class="fs"><h3>상태</h3>' + chipGroup("status", ["scheduled", "moving", "working", "done", "canceled"], d.status, ["확정", "이동 중", "작업 중", "완료", "취소"]) + "</div>" +
       '<div class="fs"><h3>작업 사진</h3><div id="photoLine"></div></div>' +
 
       '<div class="fs"><div class="f"><label for="f-note">메모</label><textarea class="inp" id="f-note" placeholder="고객 요청사항 등">' + esc(d.note) + "</textarea></div></div>" +
@@ -1458,6 +1574,7 @@
         '<div class="f"><label for="f-sitememo">현장 메모</label><textarea class="inp" id="f-sitememo" placeholder="예: 베란다 배수구 좁음, 공동현관 비번 1234">' + esc(site.memo) + "</textarea></div>" +
       "</details>" +
 
+      (F.orig ? '<div class="fs"><h3>진행 기록</h3>' + stepperHtml(F.orig) + logHtml(F.orig) + "</div>" : "") +
       (meta ? '<p class="meta-line">' + esc(meta) + "</p>" : "") +
       "</form>" +
       '<div class="sheet-f wrap" id="formFoot"></div></div>';
@@ -1719,6 +1836,9 @@
           if ((before[k] === true) !== (d.workers[k] === true)) { changed[k] = d.workers[k] === true; any = true; }
         });
         if (any) body.workers = changed;
+        if (F.orig && F.orig.status !== d.status) logPatch(body, d.status);
+        if (F.orig && !!(F.orig.payment || {}).paid !== !!d.payment.paid && body.log) body.log[Date.now().toString(36) + "_p_" + me] = { s: d.payment.paid ? "paid" : "unpaid", by: me, at: nowIso() };
+        else if (F.orig && !!(F.orig.payment || {}).paid !== !!d.payment.paid) logPatch(body, d.payment.paid ? "paid" : "unpaid");
         await S.db.doc("reservations/" + F.id).update(body);
         toast("수정했어요.");
       } else {
@@ -1726,6 +1846,7 @@
         Object.keys(d.workers).forEach(function (k) { if (d.workers[k] === true && staffName(k)) w[k] = true; });
         body.workers = w;
         body.createdBy = me;
+        if (F.requestedAt) { body.log = {}; body.log["req_" + Date.now().toString(36)] = { s: "request", by: "", at: F.requestedAt }; }
         body.createdAt = body.updatedAt;
         var ref = F.id ? S.db.doc("reservations/" + F.id) : S.db.collection("reservations").doc();
         await ref.set(body);
