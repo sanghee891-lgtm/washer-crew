@@ -450,7 +450,7 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     const pp = watch(await bc.newPage(), "privacy");
     await pp.goto(BASE + "privacy.html");
     const t = await pp.innerText("body");
-    for (const w of ["보관 기간", "30일", "1년", "삭제 요청"]) ok(t.includes(w), w);
+    for (const w of ["보관 기간", "30일", "5년", "삭제 요청"]) ok(t.includes(w), w);
     await pp.close();
   });
   await step("빈 칸·기기 미선택·동의 없음이면 안내만", async () => {
