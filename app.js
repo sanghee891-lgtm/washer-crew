@@ -30,6 +30,16 @@
     return "";
   }
   function meKey() { return "staffId." + (S.uid || "local"); }
+  // 지금 직원 명단에 있는 참여자만(예전 명단의 id는 화면에 안 보임)
+  function crew(r) { return C.assignedWorkers(r).filter(function (id) { return !!staffName(id); }); }
+  function withCrew(r) {
+    var w = {};
+    crew(r).forEach(function (id) { w[id] = true; });
+    return Object.assign({}, r, { workers: w });
+  }
+  function conflictsOf(candidate) {
+    return C.findConflicts(list().map(withCrew), candidate && withCrew(candidate));
+  }
   function list() { return Object.keys(S.all).map(function (k) { return S.all[k]; }); }
   function monthList() { return C.sortReservations(C.filterMonth(list(), S.ym)); }
   function canWrite() { return S.conn === "ok" && !S.readOnly; }
@@ -309,7 +319,7 @@
       if (S.filter === "today") return r.date === today;
       if (S.filter === "mine") return me && r.workers && r.workers[me] === true && r.status !== "canceled";
       if (S.filter === "unpaid") return r.status === "done" && !C.isPaid(r) && C.parseWon(r.total) > 0;
-      if (S.filter === "open") return r.status === "scheduled" && C.assignedWorkers(r).length < (r.needed || 2);
+      if (S.filter === "open") return r.status === "scheduled" && crew(r).length < (r.needed || 2);
       return true;
     });
   }
@@ -321,7 +331,7 @@
       all: ml.length,
       today: ml.filter(function (r) { return r.date === today; }).length,
       mine: ml.filter(function (r) { return S.myStaffId && r.workers && r.workers[S.myStaffId] === true && r.status !== "canceled"; }).length,
-      open: ml.filter(function (r) { return r.status === "scheduled" && C.assignedWorkers(r).length < (r.needed || 2); }).length,
+      open: ml.filter(function (r) { return r.status === "scheduled" && crew(r).length < (r.needed || 2); }).length,
       unpaid: ml.filter(function (r) { return r.status === "done" && !C.isPaid(r) && C.parseWon(r.total) > 0; }).length
     };
     var fs = [["all", "전체"], ["today", "오늘"], ["mine", "내 일정"], ["open", "인원 부족"], ["unpaid", "미수금"]];
@@ -343,7 +353,7 @@
       body.innerHTML = '<div class="empty" data-testid="empty"><img class="mk" src="assets/mark.webp" alt="">' + msg + "</div>";
       return;
     }
-    var conflicts = C.findConflicts(list());
+    var conflicts = conflictsOf();
     body.innerHTML = S.wide ? tableHtml(rows, conflicts) : groupsHtml(rows, conflicts);
   }
 
@@ -365,10 +375,10 @@
   }
 
   function crewHtml(r) {
-    var ids = C.assignedWorkers(r);
+    var ids = crew(r);
     var need = r.needed || 2;
     return ids.map(function (id) {
-      return '<span class="who' + (id === S.myStaffId ? " me" : "") + '">' + esc(staffName(id) || "(삭제된 직원)") + "</span>";
+      return '<span class="who' + (id === S.myStaffId ? " me" : "") + '">' + esc(staffName(id)) + "</span>";
     }).join("") + '<span class="need num' + (ids.length < need && r.status === "scheduled" ? " short" : "") + '">' + ids.length + "/" + need + "명</span>";
   }
 
@@ -487,7 +497,7 @@
       '</div><div class="cal-grid">' + cells + "</div></div>";
     if (S.calDay) {
       var dayRows = ml.filter(function (r) { return r.date === S.calDay; });
-      var conflicts = C.findConflicts(list());
+      var conflicts = conflictsOf();
       html += '<div class="section-title">' + C.dayLabel(S.calDay) + " 예약 " + dayRows.length + "건</div>";
       html += dayRows.length ? '<div class="cards" data-testid="cal-day-list">' + dayRows.map(function (r) { return cardHtml(r, conflicts[r.id]); }).join("") + "</div>"
         : '<div class="empty">이날은 예약이 없어요.' + (canWrite() ? ' <button class="linkish" data-act="add-on-day">이날 예약 추가</button>' : "") + "</div>";
@@ -526,11 +536,10 @@
       }).join("") + "</div></div></div>";
 
     var staffIds = S.staff.map(function (p) { return p.id; });
-    Object.keys(s.byStaff).forEach(function (id) { if (staffIds.indexOf(id) < 0) staffIds.push(id); });
     html += '<div class="section-title">직원별 참여</div><div class="tbl-wrap"><table class="tbl" data-testid="by-staff"><thead><tr><th>직원</th><th class="r">참여</th><th class="r">완료</th><th class="r">완료 매출(참여 건)</th></tr></thead><tbody>' +
       (staffIds.length ? staffIds.map(function (id) {
         var b = s.byStaff[id] || { count: 0, done: 0, revenue: 0 };
-        return "<tr><td><b>" + esc(staffName(id) || "(삭제된 직원)") + '</b></td><td class="r num">' + b.count + '건</td><td class="r num">' + b.done + '건</td><td class="r num">' + C.formatWon(b.revenue) + "원</td></tr>";
+        return "<tr><td><b>" + esc(staffName(id)) + '</b></td><td class="r num">' + b.count + '건</td><td class="r num">' + b.done + '건</td><td class="r num">' + C.formatWon(b.revenue) + "원</td></tr>";
       }).join("") : '<tr><td colspan="4" class="muted">직원 명단이 비어 있어요.</td></tr>') +
       "</tbody></table></div>";
 
@@ -689,6 +698,17 @@
         if (!names.length) { toast("이름을 한 명 이상 넣어 주세요."); return; }
         var listNew = names.map(function (n, i) { return { id: "s" + Date.now().toString(36) + i, name: n }; });
         try {
+          // 다른 기기에서 먼저 명단을 만들었으면 덮어쓰지 않음(직원 번호가 바뀌면 참여 기록이 어긋남)
+          var cur = await S.db.doc("config/staff").get();
+          var curList = cur.exists && Array.isArray((cur.data() || {}).list) ? cur.data().list.filter(function (p) { return p && p.id && p.name; }) : [];
+          if (curList.length) {
+            closeModal();
+            S.staff = curList;
+            staffDraft = null;
+            toast("이미 직원 명단이 있어서 그 명단을 쓸게요.");
+            askIdentity();
+            return;
+          }
           await S.db.doc("config/staff").set({ list: listNew });
           closeModal();
           S.staff = listNew;
@@ -915,7 +935,7 @@
     var today = C.todayStr();
     var d = date || (S.ym === C.ymOf(today) ? today : S.ym + "-01");
     var workers = {};
-    if (S.myStaffId) workers[S.myStaffId] = true;
+    if (S.myStaffId && staffName(S.myStaffId)) workers[S.myStaffId] = true;
     return {
       date: d, time: "09:00", durationMin: 60, status: "scheduled",
       customer: { name: "", phone: "", address: "" }, site: { floor: "", elevator: "", parking: "", memo: "" },
@@ -1011,6 +1031,8 @@
       '<div class="fs"><h3>상태</h3>' + chipGroup("status", ["scheduled", "done", "canceled"], d.status, ["예약", "완료", "취소"]) + "</div>" +
       '<div class="fs"><h3>작업 사진</h3><div id="photoLine"></div></div>' +
 
+      '<div class="fs"><div class="f"><label for="f-note">메모</label><textarea class="inp" id="f-note" placeholder="고객 요청사항 등">' + esc(d.note) + "</textarea></div></div>" +
+
       '<details class="fs"' + (site.floor || site.elevator || site.parking || site.memo ? " open" : "") + '><summary>현장 정보 (층수·엘리베이터·주차)</summary>' +
         '<div class="f2"><div class="f"><label for="f-floor">층수</label><input class="inp" id="f-floor" inputmode="numeric" value="' + esc(site.floor) + '" placeholder="예: 12"></div>' +
         '<div class="f"><span class="lab">엘리베이터</span>' + chipGroup("elevator", ["있음", "없음"], site.elevator) + "</div></div>" +
@@ -1018,7 +1040,6 @@
         '<div class="f"><label for="f-sitememo">현장 메모</label><textarea class="inp" id="f-sitememo" placeholder="예: 베란다 배수구 좁음, 공동현관 비번 1234">' + esc(site.memo) + "</textarea></div>" +
       "</details>" +
 
-      '<div class="fs"><div class="f"><label for="f-note">메모</label><textarea class="inp" id="f-note" placeholder="고객 요청사항 등">' + esc(d.note) + "</textarea></div></div>" +
       (meta ? '<p class="meta-line">' + esc(meta) + "</p>" : "") +
       "</form>" +
       '<div class="sheet-f wrap" id="formFoot"></div></div>';
@@ -1105,7 +1126,7 @@
       warn += '<div class="stale" data-testid="stale">' + esc(who ? who + "님이" : "다른 사람이") + " 방금 이 예약을 고쳤어요. 저장하면 내 입력으로 덮어써요.</div>";
     }
     var cand = Object.assign({}, d, { id: F.id || "__new__" });
-    var cf = C.findConflicts(list(), cand)[cand.id];
+    var cf = conflictsOf(cand)[cand.id];
     if (cf) warn += '<div class="conflict" data-testid="form-conflict">시간 겹침: ' + esc(conflictText(cand, cf)) + ". 그래도 저장할 수 있어요.</div>";
     $("#liveWarn").innerHTML = warn ? '<div style="display:grid;gap:8px;margin-bottom:10px">' + warn + "</div>" : "";
   }
@@ -1272,7 +1293,7 @@
         toast("수정했어요.");
       } else {
         var w = {};
-        Object.keys(d.workers).forEach(function (k) { if (d.workers[k] === true) w[k] = true; });
+        Object.keys(d.workers).forEach(function (k) { if (d.workers[k] === true && staffName(k)) w[k] = true; });
         body.workers = w;
         body.createdBy = me;
         body.createdAt = body.updatedAt;

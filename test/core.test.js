@@ -162,6 +162,12 @@ t("BOM·이스케이프", () => {
   assert.strictEqual(csv.trim().split("\r\n").length, 2);
 });
 
+t("CSV: 명단에 없는 직원은 빼고 표시", () => {
+  const csv = C.toCSV([R({ workers: { s1: true, old9: true } })], [{ id: "s1", name: "김철수" }]);
+  assert.ok(csv.includes(",김철수,"));
+  assert.ok(!csv.includes("삭제된"));
+});
+
 console.log("이전설치 출발지·도착지");
 const MV = R({ items: [{ type: "LG 2단", qty: 1, work: "이전설치" }], customer: { name: "이사고객", phone: "", address: "수원시 영통구 1" }, moveTo: { address: "용인시 기흥구 2", floor: "7", elevator: "있음" } });
 t("이전설치 여부", () => {

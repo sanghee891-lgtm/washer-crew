@@ -765,6 +765,67 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
     await c.close();
   }
 
+  // ---------------- 예전 명단 id · 메모 위치 ----------------
+  console.log("명단에 없는 직원 · 메모 위치");
+  await step("예전 직원 번호는 카드·표·통계·CSV에 안 보이고 인원 계산에서 빠짐", async () => {
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const p = await newPage(c, { uid: "u_old" }, errors);
+    await p.goto(BASE);
+    await p.evaluate(() => {
+      localStorage.clear();
+      localStorage.setItem("mockdb", JSON.stringify({
+        "config/staff": { list: [{ id: "smviv0", name: "김영우" }, { id: "smviv1", name: "박상연" }] },
+        "reservations/ro": { date: new Date().toISOString().slice(0, 10), time: "09:30", durationMin: 180, status: "scheduled", customer: { name: "예전고객", phone: "01082228272", address: "수지구 1" }, site: {}, items: [{ type: "LG 2단", qty: 1, work: "이전설치" }], moveTo: { address: "인천 남동구 1" }, total: 250000, payment: { method: "계좌이체", paid: false }, needed: 2, workers: { smvi18ve90: true, smviv0: false } },
+        "reservations/ro2": { date: new Date().toISOString().slice(0, 10), time: "10:00", durationMin: 60, status: "scheduled", customer: { name: "겹침고객", phone: "", address: "" }, site: {}, items: [{ type: "통돌이", qty: 1, work: "세척" }], total: 1, payment: { method: "미정", paid: false }, workers: { smvi18ve90: true } }
+      }));
+      localStorage.setItem("wb.staffId.u_old", "smvi18ve90"); // 예전 번호로 잡혀 있던 기기
+    });
+    await p.reload();
+    await p.waitForSelector("[data-testid=card]");
+    const body = await p.evaluate(() => document.body.innerText);
+    ok(!body.includes("삭제된"), "목록에 표시됨");
+    ok(body.includes("0/2명"), "인원은 실제 직원만");
+    eq(await p.locator("[data-testid=conflict]").count(), 0, "예전 번호로 겹침 경고 안 함");
+    await p.waitForSelector("[data-testid=pick-김영우]");
+    await p.click("[data-testid=pick-김영우]");
+    await p.click("[data-testid=filter-open]");
+    eq(await p.locator("[data-testid=card]").count(), 2, "인원 부족에 포함");
+    await p.click("[data-testid=filter-all]");
+    await p.click("[data-testid=tab-stats]");
+    ok(!(await txt(p, "[data-testid=by-staff]")).includes("삭제된"), "통계");
+    await p.click("[data-testid=csv]");
+    await p.waitForFunction(() => window.__saved.length === 1);
+    ok(!(await p.evaluate(() => window.__saved[0].data)).includes("삭제된"), "CSV");
+    await p.click("[data-testid=tab-list]");
+    await p.click("[data-testid=add]");
+    const order = await p.evaluate(() => {
+      const note = document.querySelector("#f-note").getBoundingClientRect().top;
+      const site = document.querySelector("#sheet details.fs").getBoundingClientRect().top;
+      return note < site;
+    });
+    ok(order, "메모가 현장 정보 위");
+    await c.close();
+  });
+  await step("명단이 이미 있으면 처음 설정 저장이 덮어쓰지 않음", async () => {
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const p = await newPage(c, { uid: "u_first" }, errors);
+    await p.goto(BASE);
+    await p.evaluate(() => localStorage.clear());
+    await p.reload();
+    await p.waitForSelector("[data-testid=setup-input]");
+    await p.evaluate(() => {
+      const db = JSON.parse(localStorage.getItem("mockdb") || "{}");
+      db["config/staff"] = { list: [{ id: "first0", name: "먼저저장" }] };
+      localStorage.setItem("mockdb", JSON.stringify(db));
+    });
+    await p.locator("[data-testid=setup-input]").nth(0).fill("나중저장");
+    await p.click("[data-testid=setup-save]");
+    await p.waitForSelector("[data-testid=pick-먼저저장]");
+    const names = await p.evaluate(() => JSON.parse(localStorage.getItem("mockdb"))["config/staff"].list.map((x) => x.name));
+    eq(names.join(","), "먼저저장");
+    await c.close();
+  });
+
   await step("콘솔·스크립트 오류 0건", async () => { eq(errors.length, 0, errors.join("\n")); });
 
   await browser.close();

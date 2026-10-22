@@ -308,7 +308,7 @@
         isMove(r) ? ((r.moveTo || {}).address || "") : "",
         itemsSummary(r.items), modelsSummary(r.items), worksSummary(r.items), unitCount(r.items),
         parseWon(r.total), p.method || "미정", p.paid ? "입금완료" : "미입금",
-        assignedWorkers(r).map(function (id) { return names[id] || "(삭제된 직원)"; }).join(" "),
+        assignedWorkers(r).map(function (id) { return names[id]; }).filter(Boolean).join(" "),
         site.floor || "", site.elevator || "", site.parking || "",
         [site.memo, r.note].filter(Boolean).join(" / "),
         (function () { var pc = photoCounts(r); return pc.total ? pc.before + "/" + pc.after : ""; })()
