@@ -63,6 +63,7 @@
   }
 
   var LOGIN = { names: null, pick: null, pin: "", busy: false, msg: "" };
+  var DEFAULT_PIN = "000000";
   async function showLogin() {
     document.documentElement.classList.add("need-login");
     var box = $("#login");
@@ -132,7 +133,11 @@
     var r = await sb.auth.signInWithPassword({ email: emailOf(LOGIN.pick), password: LOGIN.pin });
     var acc = !r.error && r.data.session ? await loadAccount(r.data.session) : null;
     LOGIN.busy = false;
-    if (acc) { ACC = acc; afterLogin(); return; }
+    if (acc) {
+      // 처음 번호(000000)로 들어온 직원은 장부에서 비밀번호 바꾸기 안내(사장님 제외)
+      if (LOGIN.pin === DEFAULT_PIN && !acc.isOwner) local("defaultPin", acc.uid);
+      ACC = acc; afterLogin(); return;
+    }
     LOGIN.pin = "";
     LOGIN.msg = r.error && /invalid/i.test(r.error.message || "") ? "비밀번호가 맞지 않아요. 다시 눌러 주세요."
       : r.error && r.error.status === 429 ? "너무 여러 번 틀렸어요. 잠시 뒤 다시 해 주세요."
@@ -318,14 +323,18 @@
     signOut: async function () {
       await disablePushQuietly();
       await sb.auth.signOut().catch(function () {});
-      try { localStorage.removeItem("wc.account"); } catch (e) { /* 무시 */ }
+      try { localStorage.removeItem("wc.account"); localStorage.removeItem("wc.defaultPin"); } catch (e) { /* 무시 */ }
       location.replace(location.pathname);
     },
     changePin: async function (pin) {
       if (!/^\d{6}$/.test(pin)) throw err("bad_pin");
+      if (pin === DEFAULT_PIN) throw err("default_pin");
       var r = await sb.auth.updateUser({ password: pin });
       if (r.error) throw err(/different|same/i.test(r.error.message || "") ? "same_pin" : "unavailable", r.error);
+      try { localStorage.removeItem("wc.defaultPin"); } catch (e) { /* 무시 */ }
     },
+    // 처음 번호 그대로 쓰는 중인지(이 기기에서 000000으로 로그인했고 아직 안 바꿈)
+    needsPinChange: async function () { return !!(ACC && !ACC.isOwner && local("defaultPin") === ACC.uid); },
     // 사장님: 직원 계정 목록과 비밀번호 정하기
     accounts: async function () {
       var r = await sb.from("staff_accounts").select("staff_id, is_owner");

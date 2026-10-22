@@ -67,7 +67,7 @@ const TOMORROW = dstr(new Date(Date.now() + 86400000));
 
 const STAFF = { list: [{ id: "smvivcjg00", name: "김영우" }, { id: "smvivcjg01", name: "박상연" }, { id: "smvivcjg03", name: "신창민" }] };
 const ACCOUNTS = [
-  { uid: "u-kim", staffId: "smvivcjg00", pin: "111111", owner: false },
+  { uid: "u-kim", staffId: "smvivcjg00", pin: "000000", owner: false },
   { uid: "u-park", staffId: "smvivcjg01", pin: "222222", owner: false },
   { uid: "u-shin", staffId: "smvivcjg03", pin: "333333", owner: true }
 ];
@@ -381,6 +381,46 @@ const ACCOUNTS = [
     const r = await bp.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]);
     ok(r[0] <= r[1], r.join(">"));
   });
+
+  // ---------------- 처음 비밀번호 바꾸기 안내 ----------------
+  console.log("처음 비밀번호(000000) 안내");
+  const kc = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const kp = await webPage(kc, { label: "kim", seed: { docs: { "config/staff": STAFF } } });
+  const login = async (page, name, pin) => {
+    await page.click(`[data-testid=login-${name}]`);
+    for (const d of pin) await page.click(`.pin-pad [data-key="${d}"]`);
+    await page.waitForSelector("#login", { state: "detached" });
+  };
+  await step("000000으로 들어온 직원: 바꾸기 안내 → [나중에]해도 다시 열면 또 안내", async () => {
+    await login(kp, "김영우", "000000");
+    await kp.waitForSelector("[data-testid=pin-input]");
+    ok((await kp.innerText("#modal")).includes("김영우님, 비밀번호를 바꿔 주세요"));
+    await kp.click("[data-testid=pin-later]");
+    await kp.reload();
+    await kp.waitForSelector("[data-testid=pin-input]");
+  });
+  await step("000000으로는 못 바꾸고, 새 번호로 바꾸면 안내 끝", async () => {
+    await kp.fill("[data-testid=pin-input]", "000000");
+    await kp.click("[data-testid=pin-save]");
+    await kp.waitForFunction(() => document.querySelector("#toast").textContent.includes("000000 말고"));
+    await kp.fill("[data-testid=pin-input]", "246810");
+    await kp.click("[data-testid=pin-save]");
+    await kp.waitForSelector("#modal", { state: "hidden" });
+    eq((await fakeDb(kp)).accounts.find((a) => a.uid === "u-kim").pin, "246810");
+    await kp.reload();
+    await kp.waitForSelector("[data-testid=card], [data-testid=empty]");
+    await kp.waitForTimeout(300);
+    ok(!(await kp.isVisible("[data-testid=pin-input]")), "다시 안 뜸");
+  });
+  await step("사장님은 000000으로 들어와도 안내 없음", async () => {
+    await kp.evaluate(() => { const d = JSON.parse(localStorage.getItem("fakesb")); d.accounts.find((a) => a.uid === "u-shin").pin = "000000"; localStorage.setItem("fakesb", JSON.stringify(d)); sessionStorage.removeItem("fakesb.session"); });
+    await kp.reload();
+    await login(kp, "신창민", "000000");
+    await kp.waitForSelector("[data-testid=card], [data-testid=empty]");
+    await kp.waitForTimeout(300);
+    ok(!(await kp.isVisible("[data-testid=pin-input]")), "사장님은 안내 없음");
+  });
+  await kc.close();
 
   // ---------------- 8. PWA·로그아웃 ----------------
   console.log("PWA·로그아웃");

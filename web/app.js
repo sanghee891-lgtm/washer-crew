@@ -274,7 +274,8 @@
 
   var identityAsked = false;
   function maybeAskIdentity() {
-    if (identityAsked || S.conn !== "ok" || !S.staffLoaded || S.fixedStaff) return;
+    if (S.fixedStaff) { maybeAskPin(); return; }
+    if (identityAsked || S.conn !== "ok" || !S.staffLoaded) return;
     if (S.myStaffId && staffName(S.myStaffId)) return;
     if (!$("#sheet").hidden || !$("#modal").hidden) return;
     identityAsked = true;
@@ -511,20 +512,33 @@
         if (e.target.closest("[data-logout]")) S.user.signOut();
       });
   }
+  // 처음 비밀번호(000000)로 들어온 직원: 장부를 열 때마다 바꾸기 안내(나중에 누르면 다음에 다시)
+  var pinAsked = false;
+  function maybeAskPin() {
+    if (pinAsked || !S.staffLoaded || !(S.user && S.user.needsPinChange)) return;
+    pinAsked = true;
+    S.user.needsPinChange().then(function (need) {
+      if (!need || !$("#modal").hidden || !$("#sheet").hidden) return;
+      pinDialog((staffName(S.fixedStaff) || "") + "님, 비밀번호를 바꿔 주세요", function (pin) { return S.user.changePin(pin); },
+        "지금은 처음 번호(000000)예요. 다른 사람이 내 이름으로 들어오지 못하게 나만 아는 숫자 6자리로 바꿔 주세요.", "나중에");
+    });
+  }
   function myPin() {
     pinDialog((staffName(S.fixedStaff) || "") + "님 새 비밀번호", function (pin) { return S.user.changePin(pin); });
   }
-  function pinDialog(title, run) {
-    openModal("<h2>" + esc(title) + "</h2><p>숫자 6자리를 넣어 주세요. 로그인할 때 써요.</p>" +
+  function pinDialog(title, run, desc, noLabel) {
+    openModal("<h2>" + esc(title) + "</h2><p>" + esc(desc || "숫자 6자리를 넣어 주세요. 로그인할 때 써요.") + "</p>" +
       '<input class="inp num pin-inp" id="pinInp" type="text" inputmode="numeric" autocomplete="off" maxlength="6" data-testid="pin-input">' +
-      '<button class="btn primary wide" data-pinsave data-testid="pin-save">저장</button><button class="btn wide" data-pinno>취소</button>',
+      '<button class="btn primary wide" data-pinsave data-testid="pin-save">저장</button><button class="btn wide" data-pinno data-testid="pin-later">' + esc(noLabel || "취소") + "</button>",
       async function (e) {
         if (e.target.closest("[data-pinno]")) { closeModal(); return; }
         if (!e.target.closest("[data-pinsave]")) return;
         var pin = $("#pinInp").value.replace(/\D/g, "");
         if (pin.length !== 6) { toast("숫자 6자리를 넣어 주세요."); return; }
         try { await run(pin); closeModal(); toast("비밀번호를 저장했어요."); }
-        catch (err) { toast(err && err.code === "same_pin" ? "지금과 다른 번호를 넣어 주세요." : "저장하지 못했어요. 다시 눌러 주세요."); }
+        catch (err) {
+          toast(err && err.code === "same_pin" ? "지금과 다른 번호를 넣어 주세요." : err && err.code === "default_pin" ? "000000 말고 다른 번호를 넣어 주세요." : "저장하지 못했어요. 다시 눌러 주세요.");
+        }
       });
     setTimeout(function () { var i = $("#pinInp"); if (i) i.focus(); }, 50);
   }
