@@ -182,9 +182,11 @@ const ACCOUNTS = [
 
   await step("처음엔 로그인 화면: 계정 있는 직원 이름만", async () => {
     await p.waitForSelector("[data-testid=login-신창민]");
-    eq(await p.locator(".login-names .btn").count(), 3);
+    eq(await p.locator(".login-row").count(), 3);
+    eq(await p.locator(".login-row").first().innerText(), "신창민\n개발자", "개발자가 맨 위");
+    ok((await p.locator(".login-row").nth(1).innerText()).includes("사장님"));
     eq(await p.innerText("#login h1"), "접속할 사용자를 선택해주세요");
-    eq(await p.innerText("#login .login-in > p"), "선택한 사용자로 업무를 시작합니다.");
+    eq(await p.innerText("#login .login-head p"), "선택한 사용자로 업무를 시작합니다.");
     ok(!(await p.isVisible("#app")), "장부는 숨김");
   });
   await step("틀린 비밀번호 → 안내, 맞으면 장부 열림(이름 다시 고르지 않음)", async () => {
@@ -276,10 +278,10 @@ const ACCOUNTS = [
   await step("사장님 설정: 내 계정·알림·고객 예약 링크·직원 계정 관리", async () => {
     await p.click("[data-testid=tab-settings]");
     await p.waitForSelector("[data-testid=my-account]");
-    ok((await p.innerText("[data-testid=my-account]")).includes("신창민님으로 로그인했어요 (사장님)"));
+    ok((await p.innerText("[data-testid=my-account]")).includes("신창민님으로 로그인했어요 (개발자)"));
     ok((await p.innerText("[data-testid=push-panel]")).includes("꺼져 있어요"));
     eq(await p.innerText("[data-testid=book-url]"), BASE + "book.html");
-    await p.waitForFunction(() => document.querySelector("[data-testid=accounts]") && document.querySelector("[data-testid=accounts]").innerText.includes("사장님 계정"));
+    await p.waitForFunction(() => document.querySelector("[data-testid=accounts]") && document.querySelector("[data-testid=accounts]").innerText.includes("개발자 계정"));
     ok(await p.isVisible("[data-testid=staff-save]"), "사장님은 명단 수정 가능");
   });
   await step("사장님이 직원 비밀번호 바꾸기", async () => {

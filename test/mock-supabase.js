@@ -118,9 +118,14 @@ function mockSupabase(cfg) {
     await delay();
     window.__fakesb.calls.push("rpc:" + name);
     var d = load(), a = acct(d);
-    if (name === "login_staff") {
-      var list = (d.docs["config/staff"] || {}).list || [];
-      return { data: list.filter(function (p) { return d.accounts.some(function (x) { return x.staffId === p.id; }); }), error: null };
+    if (name === "login_staff" || name === "login_staff_roles") {
+      var list = ((d.docs["config/staff"] || {}).list || []).map(function (p) {
+        var a2 = d.accounts.filter(function (x) { return x.staffId === p.id; })[0];
+        return a2 ? { id: p.id, name: p.name, is_owner: !!a2.owner } : null;
+      }).filter(Boolean);
+      if (name === "login_staff") return { data: list.map(function (p) { return { id: p.id, name: p.name }; }), error: null };
+      list.sort(function (x, y) { return (y.is_owner ? 1 : 0) - (x.is_owner ? 1 : 0); });
+      return { data: list, error: null };
     }
     if (!a) return { data: null, error: { code: "42501", message: "permission denied" } };
     if (name === "docs_merge") {

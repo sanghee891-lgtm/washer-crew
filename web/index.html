@@ -371,22 +371,47 @@ a.btn { color: var(--ink); text-decoration: none; display: inline-flex; align-it
   .toast { bottom: 24px; }
   .cell { min-height: 92px; }
 }
-/* 로그인(이름 고르기 + 비밀번호 6자리) */
+/* 로그인(사용자 고르기 + 비밀번호 6자리) */
 .need-login #app { display: none; }
-#login { position: fixed; inset: 0; z-index: 60; background: var(--bg); overflow-y: auto; display: grid; place-items: start center; padding: calc(24px + env(safe-area-inset-top, 0px)) 16px 24px; }
-.login-in { width: 100%; max-width: 420px; display: grid; gap: 12px; text-align: center; }
-.login-in h1 { margin: 0; font-size: 26px; text-wrap: balance; word-break: keep-all; }
-.login-in p { margin: 0; font-size: 17px; color: var(--ink-2); }
-.login-logo { width: 120px; height: 120px; border-radius: 26px; border: 1px solid var(--line); background: #fff; justify-self: center; }
-.login-names { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.login-names .btn { min-height: 64px; font-size: 20px; }
-.login-err { color: var(--bad) !important; font-weight: 700; min-height: 1.4em; }
+#login { position: fixed; inset: 0; z-index: 60; background: var(--bg); overflow-y: auto; display: grid; place-items: start center; padding: calc(28px + env(safe-area-inset-top, 0px)) 16px calc(24px + env(safe-area-inset-bottom, 0px)); }
+.login-in { width: 100%; max-width: 480px; display: grid; gap: 20px; }
+.login-brand { display: grid; justify-items: center; gap: 4px; text-align: center; }
+.login-mark { width: 76px; height: 76px; border-radius: 22px; background: #fff; border: 1px solid var(--line); box-shadow: var(--shadow); display: grid; place-items: center; margin-bottom: 8px; }
+.login-mark img { width: 56px; height: auto; }
+.login-title { font-size: 30px; font-weight: 800; letter-spacing: -.01em; color: var(--brand-1); }
+.login-title b { color: var(--brand-2); font-weight: 800; }
+.login-sub { font-size: 15px; color: var(--ink-3); }
+.login-head h1 { margin: 0; font-size: 24px; font-weight: 800; word-break: keep-all; text-wrap: balance; }
+.login-head p { margin: 4px 0 0; font-size: 15px; color: var(--ink-2); }
+.login-list { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; }
+.login-row { display: flex; align-items: center; gap: 14px; width: 100%; padding: 16px 18px; border: 0; background: none; text-align: left; position: relative; }
+.login-row + .login-row::before { content: ""; position: absolute; top: 0; left: 18px; right: 18px; border-top: 1px solid var(--line); }
+.login-row:active { background: var(--surface-2); }
+.lr-av { width: 50px; height: 50px; border-radius: 50%; flex: none; display: grid; place-items: center; background: var(--surface-2); color: var(--ink-2); }
+.lr-av.owner { background: var(--accent-soft); color: var(--accent); }
+.lr-av svg { width: 24px; height: 24px; }
+.lr-av.big { width: 64px; height: 64px; }
+.lr-av.big svg { width: 30px; height: 30px; }
+.lr-name { flex: 1; display: grid; gap: 2px; min-width: 0; }
+.lr-name b { font-size: 18px; }
+.lr-name small, .login-who small { font-size: 14px; color: var(--ink-3); }
+.lr-chev { color: var(--ink-3); display: grid; }
+.lr-chev svg { width: 22px; height: 22px; }
+.login-card { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 14px 16px 10px; display: grid; gap: 10px; text-align: center; }
+.login-back { justify-self: start; display: inline-flex; align-items: center; gap: 2px; border: 0; background: none; padding: 4px 0; color: var(--accent); font-weight: 700; font-size: 15px; }
+.login-back svg { width: 18px; height: 18px; }
+.login-who { display: grid; justify-items: center; gap: 4px; }
+.login-who b { font-size: 22px; }
+.login-ask { margin: 0; font-size: 16px; color: var(--ink-2); }
+.login-wait { text-align: center; }
+.login-foot { text-align: center; font-size: 12px; letter-spacing: .12em; color: var(--ink-3); padding-top: 4px; }
+.login-err { margin: 0; color: var(--bad) !important; font-weight: 700; min-height: 1.4em; }
 .pin-dots { display: flex; justify-content: center; gap: 14px; margin: 6px 0; }
 .pin-dots i { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--accent); }
 .pin-dots i.on { background: var(--accent); }
 .pin-pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-.pin-pad .btn { min-height: 64px; font-size: 26px; }
-.pin-pad [data-back], .pin-pad [data-del] { font-size: 16px; }
+.pin-pad .btn { min-height: 56px; font-size: 26px; }
+.pin-pad [data-del] { font-size: 16px; }
 .pin-inp { height: 56px; font-size: 26px; letter-spacing: .4em; text-align: center; }
 
 /* 고객 요청·확인 문자·알림 */

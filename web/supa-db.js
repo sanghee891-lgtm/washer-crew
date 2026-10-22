@@ -78,35 +78,50 @@
     }
     renderLogin();
     if (!LOGIN.names) {
-      var r = await sb.rpc("login_staff");
+      var r = await sb.rpc("login_staff_roles");
+      if (r.error) r = await sb.rpc("login_staff"); // 예전 서버 함수(역할 없음)
       if (r.error) { LOGIN.msg = "인터넷 연결을 확인해 주세요."; LOGIN.names = []; }
       else LOGIN.names = r.data || [];
       renderLogin();
     }
   }
 
+  // 이름 아래 표시: 관리 권한 계정(신창민)은 "개발자", 나머지는 "사장님"(표시만, 권한은 그대로)
+  var ROLE = { owner: "개발자", staff: "사장님" };
+  var SVG = {
+    user: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c.9-3.6 3.7-5.5 7-5.5s6.1 1.9 7 5.5"/></svg>',
+    chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>',
+    back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>'
+  };
+  function avatar(p, big) {
+    return '<span class="lr-av' + (p.is_owner ? " owner" : "") + (big ? " big" : "") + '">' + SVG.user + "</span>";
+  }
   function renderLogin() {
     var box = $("#login");
     if (!box) return;
-    var html = '<div class="login-in"><img class="login-logo" src="assets/logo.webp" alt="세탁기 크루">';
+    var html = '<div class="login-in"><div class="login-brand"><span class="login-mark"><img src="assets/mark.webp" alt=""></span>' +
+      '<div class="login-title">세탁기 <b>크루</b></div><div class="login-sub">예약 · 매출 관리</div></div>';
     if (!LOGIN.pick) {
-      html += "<h1>접속할 사용자를 선택해주세요</h1><p>선택한 사용자로 업무를 시작합니다.</p>";
-      if (!LOGIN.names) html += '<p class="muted">불러오는 중…</p>';
+      html += '<div class="login-head"><h1>접속할 사용자를 선택해주세요</h1><p>선택한 사용자로 업무를 시작합니다.</p></div>';
+      if (!LOGIN.names) html += '<p class="muted login-wait">불러오는 중…</p>';
       else if (!LOGIN.names.length) html += '<p class="login-err">' + esc(LOGIN.msg || "등록된 직원이 없어요. 사장님께 문의해 주세요.") + '</p><button class="btn wide" data-retry>다시 시도</button>';
-      else html += '<div class="login-names">' + LOGIN.names.map(function (p) {
-        return '<button class="btn" data-name="' + esc(p.id) + '" data-testid="login-' + esc(p.name) + '">' + esc(p.name) + "</button>";
+      else html += '<div class="login-list">' + LOGIN.names.map(function (p) {
+        return '<button class="login-row" data-name="' + esc(p.id) + '" data-testid="login-' + esc(p.name) + '">' + avatar(p) +
+          '<span class="lr-name"><b>' + esc(p.name) + "</b><small>" + (p.is_owner ? ROLE.owner : ROLE.staff) + "</small></span>" +
+          '<span class="lr-chev">' + SVG.chev + "</span></button>";
       }).join("") + "</div>";
     } else {
       var who = (LOGIN.names || []).filter(function (p) { return p.id === LOGIN.pick; })[0] || {};
-      html += "<h1>" + esc(who.name) + "님</h1><p>비밀번호 숫자 6자리를 누르세요.</p>" +
+      html += '<div class="login-card"><button class="login-back" data-back>' + SVG.back + "다른 사용자 선택</button>" +
+        '<div class="login-who">' + avatar(who, true) + "<b>" + esc(who.name) + "님</b><small>" + (who.is_owner ? ROLE.owner : ROLE.staff) + "</small></div>" +
+        '<p class="login-ask">비밀번호 숫자 6자리를 누르세요.</p>' +
         '<div class="pin-dots" aria-label="입력한 자리 수 ' + LOGIN.pin.length + '">' +
         [0, 1, 2, 3, 4, 5].map(function (i) { return '<i class="' + (i < LOGIN.pin.length ? "on" : "") + '"></i>'; }).join("") + "</div>" +
-        '<p class="login-err" data-testid="login-err">' + esc(LOGIN.msg) + "</p>" +
+        '<p class="login-err" data-testid="login-err">' + esc(LOGIN.busy ? "" : LOGIN.msg) + (LOGIN.busy ? '<span class="muted">확인 중…</span>' : "") + "</p></div>" +
         '<div class="pin-pad">' + [1, 2, 3, 4, 5, 6, 7, 8, 9].map(function (n) { return '<button class="btn" data-key="' + n + '">' + n + "</button>"; }).join("") +
-        '<button class="btn" data-back>다른 이름</button><button class="btn" data-key="0">0</button><button class="btn" data-del aria-label="한 자리 지우기">지우기</button></div>' +
-        (LOGIN.busy ? '<p class="muted">확인 중…</p>' : "");
+        '<span></span><button class="btn" data-key="0">0</button><button class="btn" data-del aria-label="한 자리 지우기">지우기</button></div>';
     }
-    box.innerHTML = html + "</div>";
+    box.innerHTML = html + '<div class="login-foot">WASHER CREW WORKSPACE</div></div>';
   }
 
   function onLoginKey(e) {

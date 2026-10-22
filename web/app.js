@@ -504,7 +504,7 @@
 
   function openAccount() {
     var name = staffName(S.fixedStaff) || "";
-    openModal("<h2>" + esc(name) + "님</h2><p>이 기기에 로그인되어 있어요." + (S.isOwner ? " (사장님)" : "") + "</p>" +
+    openModal("<h2>" + esc(name) + "님</h2><p>이 기기에 로그인되어 있어요." + (S.isOwner ? " (개발자)" : "") + "</p>" +
       '<button class="btn wide" data-mypin>내 비밀번호 바꾸기</button>' +
       '<button class="btn wide danger" data-logout data-testid="logout">로그아웃</button>',
       function (e) {
@@ -556,7 +556,7 @@
     return '<div class="section-title">직원 로그인 계정</div><div class="panel" data-testid="accounts">' +
       S.staff.map(function (p) {
         var has = !!a[p.id];
-        return '<div class="acct-row"><b>' + esc(p.name) + '</b><span class="muted">' + (!S.accounts ? "" : has ? (a[p.id].isOwner ? "사장님 계정" : "계정 있음") : "계정 없음") + "</span>" +
+        return '<div class="acct-row"><b>' + esc(p.name) + '</b><span class="muted">' + (!S.accounts ? "" : has ? (a[p.id].isOwner ? "개발자 계정" : "계정 있음") : "계정 없음") + "</span>" +
           '<button class="btn" data-act="acct-pin" data-sid="' + esc(p.id) + '">' + (has ? "비밀번호 바꾸기" : "계정 만들기") + "</button>" +
           (has && !a[p.id].isOwner ? '<button class="btn danger" data-act="acct-rm" data-sid="' + esc(p.id) + '">로그인 막기</button>' : "") + "</div>";
       }).join("") +
@@ -1000,7 +1000,7 @@
   function renderSettings() {
     if (!staffDraft) staffDraft = S.staff.map(function (p) { return { id: p.id, name: p.name }; });
     var html = S.fixedStaff
-      ? '<div class="section-title" style="margin-top:4px">내 계정</div><div class="panel" data-testid="my-account"><p style="margin:0 0 8px"><b>' + esc(staffName(S.fixedStaff)) + "님</b>으로 로그인했어요" + (S.isOwner ? " (사장님)" : "") + ".</p>" +
+      ? '<div class="section-title" style="margin-top:4px">내 계정</div><div class="panel" data-testid="my-account"><p style="margin:0 0 8px"><b>' + esc(staffName(S.fixedStaff)) + "님</b>으로 로그인했어요" + (S.isOwner ? " (개발자)" : "") + ".</p>" +
         '<div class="chips"><button class="btn" data-act="my-pin">비밀번호 바꾸기</button><button class="btn danger" data-act="logout">로그아웃</button></div></div>'
       : '<div class="section-title" style="margin-top:4px">내 이름</div><div class="panel">' +
       (S.staff.length ? '<div class="chips">' + S.staff.map(function (p) {
