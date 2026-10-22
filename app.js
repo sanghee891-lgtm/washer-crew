@@ -64,8 +64,47 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(function () { el.hidden = true; }, action ? 6000 : 2600);
   }
+  // ---------------- 뒤로가기 ----------------
+  // 창(사진 크게 보기 > 사진·주소 창 > 입력 화면 > 다른 탭)이 열려 있는 동안 기록을 하나 두어
+  // 휴대폰 뒤로가기가 장부를 벗어나지 않고 맨 위 창부터 닫게 함
+  var NAV = { depth: 0, ignore: 0, releaseTimer: null };
+  function anyOpen() {
+    return !$("#modal").hidden || !$("#sheet").hidden || S.tab !== "list";
+  }
+  // 창을 열 때(누를 때) 기록 한 칸 추가
+  function pushLayer() {
+    try { history.pushState({ wb: NAV.depth + 1 }, ""); NAV.depth++; } catch (e) { /* 막힌 환경 */ }
+  }
+  // 다 닫혔는데 남은 기록이 있으면 한 번에 정리(다음 뒤로가기가 헛돌지 않게)
+  function dropLeftovers() {
+    if (NAV.depth > 0 && !anyOpen()) {
+      var n = NAV.depth;
+      NAV.depth = 0; NAV.ignore++;
+      try { history.go(-n); } catch (e) { NAV.ignore--; }
+    }
+  }
+  function releaseGuardSoon() {
+    clearTimeout(NAV.releaseTimer);
+    NAV.releaseTimer = setTimeout(dropLeftovers, 250);
+  }
+  function closeTop() {
+    if (P && P.view && !$("#modal").hidden) { P.view = null; P.confirmDel = false; renderPhotos(); }
+    else if (!$("#modal").hidden) closeModal();
+    else if (!$("#sheet").hidden) closeForm();
+    else if (S.tab !== "list") setTab("list");
+  }
+  window.addEventListener("popstate", function () {
+    if (NAV.ignore) { NAV.ignore--; return; }
+    NAV.depth = Math.max(0, NAV.depth - 1);
+    clearTimeout(NAV.releaseTimer);
+    closeTop();
+    if (!anyOpen()) dropLeftovers();
+    else if (NAV.depth === 0) pushLayer(); // 아직 열린 창이 있는데 기록이 없으면 하나 보충
+  });
+
   function openModal(html, onClick) {
     var m = $("#modal");
+    if (m.hidden) pushLayer();
     m.innerHTML = '<div class="modal-in" role="dialog" aria-modal="true">' + html + "</div>";
     m.hidden = false;
     m.onclick = function (e) {
@@ -73,7 +112,7 @@
       if (onClick) onClick(e);
     };
   }
-  function closeModal() { var m = $("#modal"); m.hidden = true; m.innerHTML = ""; m.onchange = null; P = null; if (F) refreshFormLive(); }
+  function closeModal() { var m = $("#modal"); m.hidden = true; m.innerHTML = ""; m.onchange = null; P = null; if (F) refreshFormLive(); releaseGuardSoon(); }
 
   function writeError(e) {
     var code = e && e.code;
@@ -86,8 +125,7 @@
 
   // ---------------- 연결 ----------------
   async function boot() {
-    try { S.tab = store("tab") || "list"; } catch (e) { /* 무시 */ }
-    if (["list", "cal", "stats", "settings"].indexOf(S.tab) < 0) S.tab = "list";
+    S.tab = "list"; // 항상 예약목록에서 시작(뒤로가기 순서가 단순해짐)
     S.myStaffId = store(meKey()) || null;
     var mq = window.matchMedia("(min-width: 900px)");
     S.wide = mq.matches;
@@ -675,10 +713,12 @@
 
   // ---------------- 이벤트 ----------------
   function setTab(t) {
-    S.tab = t; store("tab", t);
+    var wasList = S.tab === "list";
+    S.tab = t;
     if (t === "settings") staffDraft = null;
     render();
     window.scrollTo(0, 0);
+    if (t !== "list" && wasList) pushLayer(); else if (t === "list") releaseGuardSoon();
   }
   function setMonth(ym) {
     S.ym = ym;
@@ -901,6 +941,7 @@
     renderForm();
     $("#sheet").hidden = false;
     document.body.style.overflow = "hidden";
+    pushLayer();
     if (!id) setTimeout(function () { var n = $("#f-name"); if (n && S.wide) n.focus(); }, 50);
     if (data.customer.phone) lookupHistory();
   }
@@ -910,6 +951,7 @@
     $("#sheet").hidden = true;
     $("#sheet").innerHTML = "";
     document.body.style.overflow = "";
+    releaseGuardSoon();
   }
 
   function chipGroup(name, options, value, labels) {
@@ -1258,6 +1300,8 @@
 
   // ---------------- 작업 사진 ----------------
   var KIND = { before: "작업 전", after: "작업 후" };
+  var GONE = {}; // 방금 지운 사진(기록이 갱신되기 전에도 바로 숨김)
+  function livePhotos(r, kind) { return C.photoList(r, kind).filter(function (p) { return !GONE[p.id]; }); }
   function openPhotos(id) {
     if (!S.all[id]) return;
     P = { id: id, view: null, confirmDel: false };
@@ -1270,12 +1314,12 @@
     var m = $("#modal");
     if (!r) { closeModal(); toast("예약이 삭제되어 사진 창을 닫았어요."); return; }
     var canUp = !!(S.assets && canWrite());
-    var all = C.photoList(r);
+    var all = livePhotos(r);
     var html;
     if (P.view) {
       var i = all.map(function (p) { return p.id; }).indexOf(P.view);
       if (i < 0) { P.view = null; return renderPhotos(); }
-      var ph = all[i], same = C.photoList(r, ph.kind), k = same.map(function (p) { return p.id; }).indexOf(ph.id);
+      var ph = all[i], same = livePhotos(r, ph.kind), k = same.map(function (p) { return p.id; }).indexOf(ph.id);
       html = '<div class="pv-top"><button class="btn" data-pback>목록으로</button><b>' + KIND[ph.kind] + " " + (k + 1) + "/" + same.length + "</b></div>" +
         '<div class="pv-img"><img src="/_blob/' + esc(ph.id) + '" alt="' + KIND[ph.kind] + ' 사진" data-testid="photo-big"></div>' +
         '<p class="muted pv-meta">' + esc(staffName(ph.by) || "") + " " + esc(fmtStamp(ph.at)) + "에 올림</p>" +
@@ -1287,7 +1331,7 @@
       var up = UP[P.id];
       if (up && up.total) html += '<div class="banner info" data-testid="photo-busy">사진 ' + up.total + "장 중 " + up.done + "장 올렸어요. 창을 닫아도 계속 올라가요.</div>";
       ["before", "after"].forEach(function (kind) {
-        var list = C.photoList(r, kind);
+        var list = livePhotos(r, kind);
         html += '<div class="ph-sec"><div class="ph-h">' + KIND[kind] + ' <span class="num muted">' + list.length + "장</span></div>" +
           '<div class="ph-grid" data-testid="grid-' + kind + '">' + list.map(function (p, n) {
             return '<button class="ph" data-pv="' + esc(p.id) + '"><img src="/_blob/' + esc(p.id) + '" alt="' + KIND[kind] + " 사진 " + (n + 1) + '" loading="lazy"></button>';
@@ -1318,11 +1362,11 @@
     var t = e.target;
     if (t.closest("[data-pclose]")) { closeModal(); return; }
     var v = t.closest("[data-pv]");
-    if (v) { P.view = v.getAttribute("data-pv"); P.confirmDel = false; renderPhotos(); return; }
+    if (v) { P.view = v.getAttribute("data-pv"); P.confirmDel = false; pushLayer(); renderPhotos(); return; }
     if (t.closest("[data-pback]")) { P.view = null; P.confirmDel = false; renderPhotos(); return; }
     var st = t.closest("[data-pstep]");
     if (st && !st.disabled) {
-      var all = C.photoList(S.all[P.id]).map(function (p) { return p.id; });
+      var all = livePhotos(S.all[P.id]).map(function (p) { return p.id; });
       var i = all.indexOf(P.view) + +st.getAttribute("data-pstep");
       if (all[i]) { P.view = all[i]; P.confirmDel = false; renderPhotos(); }
       return;
@@ -1378,7 +1422,19 @@
   // 예약별 업로드 진행 상태: {total, done, items:[{kind, url, failed}]}
   var UP = {};
   var writeChain = {};
-  var UPLOAD_AT_ONCE = 3;
+  var UPLOAD_AT_ONCE = 8;
+
+  // 너무 많이 동시에 보내 '잠시 뒤 다시'가 오면 조금 기다렸다 다시(최대 3번)
+  async function uploadWithRetry(blob) {
+    for (var tryNo = 0; ; tryNo++) {
+      try { return await S.assets.upload(blob, { type: blob.type || "image/jpeg" }); }
+      catch (e) {
+        var again = e && (e.code === "rate_limited" || e.code === "store_unavailable");
+        if (!again || tryNo >= 3) throw e;
+        await new Promise(function (r) { setTimeout(r, 800 * (tryNo + 1) + Math.random() * 400); });
+      }
+    }
+  }
 
   // 같은 예약 문서에는 한 번에 하나씩 기록(동시에 쓰면 느려짐)
   function recordPhoto(rid, assetId, kind, at) {
@@ -1409,7 +1465,7 @@
         var job = jobs[next++];
         try {
           var blob = await compressImage(job.file);
-          var res = await S.assets.upload(blob, { type: blob.type || "image/jpeg" });
+          var res = await uploadWithRetry(blob);
           await recordPhoto(rid, res.id, kind, job.at);
           ok++;
           up.items.splice(up.items.indexOf(job.item), 1);
@@ -1441,6 +1497,7 @@
       toast(e && e.code === "not_uploader" ? "다른 직원이 올린 사진은 올린 사람이나 사장님만 지울 수 있어요." : "사진을 지우지 못했어요. 다시 눌러 주세요.");
       return;
     }
+    GONE[pid] = true;
     var patch = { photos: {} };
     patch.photos[pid] = null;
     try { await S.db.doc("reservations/" + rid).update(patch); } catch (e) { /* 파일은 지워짐, 목록은 다음 수정 때 정리 */ }

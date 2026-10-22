@@ -18,6 +18,12 @@ function skeleton(body) {
 const blobs = new Map(); // 가짜 asset 저장소 (/_blob/<id>)
 const server = http.createServer((req, res) => {
   const u = req.url.split("?")[0];
+  // 실제처럼 바깥 페이지 안의 iframe에 앱을 띄움(뒤로가기 시험용)
+  if (u === "/start") { res.writeHead(200, { "content-type": "text/html; charset=utf-8" }); return res.end("<title>start</title><p>start</p>"); }
+  if (u === "/frame") {
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    return res.end('<!doctype html><title>host</title><body style="margin:0"><iframe id="app" src="/" style="border:0;width:100vw;height:100vh"></iframe></body>');
+  }
   if (u === "/__blobcount") { res.writeHead(200); return res.end(String(blobs.size)); }
   if (u.startsWith("/_blob/")) {
     const id = u.slice(7);
@@ -66,6 +72,7 @@ async function newPage(ctx, cfg, errors) {
   await page.addInitScript(mockClaude, cfg);
   page.on("pageerror", (e) => errors.push("pageerror: " + e.message));
   page.on("console", (m) => { if (m.type() === "error") errors.push("console: " + m.text()); });
+  page.on("response", (r) => { if (r.status() === 404) errors.push("404: " + r.url().replace(/^https?:\/\/[^/]+/, "") + " (" + (cfg && cfg.uid) + ")"); });
   return page;
 }
 async function txt(page, sel) { return (await page.locator(sel).first().innerText()).trim(); }
@@ -570,7 +577,7 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
       await owner.waitForFunction(() => document.querySelector("[data-testid=photos-btn]").textContent.includes("사진 3"));
       await staff.click("[data-pclose]");
     });
-    await step("여러 장 한꺼번에: 바로 미리보기, 동시에 올라감, 빠짐없이 저장", async () => {
+    await step("여러 장 한꺼번에: 바로 미리보기, 8장씩 동시에 올라감, 빠짐없이 저장", async () => {
       const slow = await newPage(ctxP, { uid: "u_lee", uploadDelay: 600 }, errors);
       await slow.goto(BASE);
       await slow.waitForSelector("[data-testid=photos-btn]");
@@ -578,25 +585,44 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
       eq(await slow.locator("[data-testid=add-after]").innerText().then((t) => t.replace(/\s+/g, " ")), "앨범에서 여러 장");
       ok(await slow.locator("[data-testid=cam-after] input[capture]").count() === 1, "카메라 버튼");
       const files = [];
-      for (let i = 0; i < 6; i++) files.push({ name: "m" + i + ".png", mimeType: "image/png", buffer: small1 });
+      for (let i = 0; i < 10; i++) files.push({ name: "m" + i + ".png", mimeType: "image/png", buffer: small1 });
       const t0 = Date.now();
       await slow.setInputFiles("[data-testid=file-after]", files);
-      await slow.waitForFunction(() => document.querySelectorAll("[data-testid=pending]").length === 6, null, { timeout: 2000 });
-      ok((await txt(slow, "[data-testid=photo-busy]")).includes("6장 중"), "진행 표시");
+      await slow.waitForFunction(() => document.querySelectorAll("[data-testid=pending]").length === 10, null, { timeout: 2000 });
+      ok((await txt(slow, "[data-testid=photo-busy]")).includes("10장 중"), "진행 표시");
       await slow.screenshot({ path: path.join(SHOTS, "m-photos-uploading.png") });
-      await slow.waitForFunction(() => document.querySelectorAll("[data-testid=grid-after] img").length === 8 && !document.querySelector("[data-testid=pending]"), null, { timeout: 15000 });
+      await slow.waitForFunction(() => document.querySelectorAll("[data-testid=grid-after] img").length === 12 && !document.querySelector("[data-testid=pending]"), null, { timeout: 15000 });
       const took = Date.now() - t0;
-      ok(took < 6 * 600 * 0.75, "한 장씩 올리면 3.6초 이상, 실제 " + took + "ms");
-      await owner.waitForFunction(() => document.querySelector("[data-testid=photos-btn]").textContent.includes("사진 9"));
+      ok(took < 10 * 600 * 0.45, "한 장씩 올리면 6초 이상, 실제 " + took + "ms");
+      eq(await slow.evaluate(() => window.__maxInflight), 8, "동시에 올라간 최대 장수");
+      eq(await slow.locator("#toast").innerText(), "작업 후 사진 10장을 올렸어요.");
+      await owner.waitForFunction(() => document.querySelector("[data-testid=photos-btn]").textContent.includes("사진 13"));
       ok(!(await slow.isVisible("[data-testid=photo-busy]")), "진행 표시 사라짐");
       // 방금 올린 6장 정리
-      for (let i = 0; i < 6; i++) {
+      for (let i = 0; i < 10; i++) {
         await slow.click("[data-testid=grid-after] .ph[data-pv] >> nth=2");
         await slow.click("[data-testid=photo-del]");
         await slow.click("[data-testid=photo-del-yes]");
-        await slow.waitForFunction((n) => document.querySelectorAll("[data-testid=grid-after] img").length === n, 7 - i);
+        await slow.waitForFunction((n) => document.querySelectorAll("[data-testid=grid-after] img").length === n, 11 - i);
       }
       await slow.close();
+    });
+
+    await step("'잠시 뒤 다시' 거절이 와도 자동으로 다시 올려 모두 성공", async () => {
+      const rl = await newPage(ctxP, { uid: "u_lee", rateLimitFirst: 2 }, errors);
+      await rl.goto(BASE);
+      await rl.waitForSelector("[data-testid=photos-btn]");
+      await rl.click("[data-testid=photos-btn]");
+      await rl.setInputFiles("[data-testid=file-before]", [0, 1, 2].map((i) => ({ name: "r" + i + ".png", mimeType: "image/png", buffer: small2 })));
+      await rl.waitForFunction(() => document.querySelector("#toast").textContent === "작업 전 사진 3장을 올렸어요.", null, { timeout: 10000 });
+      eq(await rl.locator("[data-testid=grid-before] .ph[data-pv]").count(), 4);
+      for (let i = 0; i < 3; i++) {
+        await rl.click("[data-testid=grid-before] .ph[data-pv] >> nth=1");
+        await rl.click("[data-testid=photo-del]");
+        await rl.click("[data-testid=photo-del-yes]");
+        await rl.waitForFunction((n) => document.querySelectorAll("[data-testid=grid-before] .ph[data-pv]").length === n, 3 - i);
+      }
+      await rl.close();
     });
 
     await step("보기 전용은 사진 보기만(추가 버튼 없음)", async () => {
@@ -655,6 +681,88 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
       eq(+(await (await fetch(BASE + "__blobcount")).text()), 0, "삭제 후 파일 수");
     });
     await ctxP.close();
+  }
+
+  // ---------------- 뒤로가기 ----------------
+  console.log("휴대폰 뒤로가기");
+  {
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true });
+    const page = await c.newPage();
+    page.on("pageerror", (e) => errors.push("pageerror: " + e.message));
+    await page.addInitScript(mockClaude, { uid: "u_back" });
+    await page.goto(BASE + "start");
+    await page.evaluate(() => {
+      localStorage.clear();
+      localStorage.setItem("mockdb", JSON.stringify({
+        "config/staff": { list: [{ id: "s1", name: "김철수" }] },
+        "reservations/rb": { date: new Date().toISOString().slice(0, 10), time: "10:00", durationMin: 60, status: "scheduled", customer: { name: "뒤로고객", phone: "01012341234", address: "서울 중구 1" }, site: {}, items: [{ type: "통돌이", qty: 1, work: "세척" }], total: 50000, payment: { method: "미정", paid: false }, workers: {} }
+      }));
+      localStorage.setItem("wb.staffId.u_back", "s1");
+    });
+    await page.goto(BASE + "frame");
+    const f = page.frameLocator("#app");
+    await f.locator("[data-testid=card]").waitFor();
+    const back = async () => { await page.evaluate(() => history.back()); await page.waitForTimeout(250); };
+    const onApp = async () => { eq(new URL(page.url()).pathname, "/frame", "장부에 머물러야 함"); await f.locator("#view").waitFor(); };
+    const sheetOpen = () => f.locator("#sheet").evaluate((e) => !e.hidden);
+    const modalOpen = () => f.locator("#modal").evaluate((e) => !e.hidden);
+    const curTab = () => f.locator(".tab[aria-current=page]").getAttribute("data-tab");
+
+    await step("입력 화면에서 뒤로가기 → 입력 화면만 닫힘", async () => {
+      await f.locator("[data-testid=add]").click();
+      ok(await sheetOpen());
+      await back();
+      ok(!(await sheetOpen()), "입력 화면 닫힘");
+      await onApp();
+    });
+    await step("주소 창 → 뒤로가기로 닫힘", async () => {
+      await f.locator("[data-testid=card] [data-act=addr]").click();
+      ok(await modalOpen());
+      await back();
+      ok(!(await modalOpen()));
+      await onApp();
+    });
+    await step("통계 탭 → 뒤로가기 → 예약목록", async () => {
+      await f.locator("[data-testid=tab-stats]").click();
+      await f.locator("[data-testid=tab-settings]").click();
+      await back();
+      eq(await curTab(), "list");
+      await onApp();
+    });
+    await step("달력 → 예약 열기 → 뒤로 두 번: 입력 닫힘 → 예약목록", async () => {
+      await f.locator("[data-testid=tab-cal]").click();
+      await f.locator("[data-testid=cal-day-list] .c-name").first().click().catch(async () => {
+        await f.locator(".cell.today").click(); await f.locator("[data-testid=cal-day-list] .c-name").first().click();
+      });
+      ok(await sheetOpen());
+      await back();
+      ok(!(await sheetOpen()));
+      eq(await curTab(), "cal");
+      await back();
+      eq(await curTab(), "list");
+      await onApp();
+    });
+    await step("사진 크게 보기 → 뒤로: 사진 목록 → 뒤로: 사진 창 닫힘", async () => {
+      await f.locator("[data-testid=photos-btn]").click();
+      const png = Buffer.from(await page.evaluate(() => { const c = document.createElement("canvas"); c.width = 300; c.height = 200; c.getContext("2d").fillRect(0, 0, 300, 200); return c.toDataURL("image/png").split(",")[1]; }), "base64");
+      await f.locator("[data-testid=file-before]").setInputFiles({ name: "b.png", mimeType: "image/png", buffer: png });
+      await f.locator("[data-testid=grid-before] .ph[data-pv]").click();
+      await f.locator("[data-testid=photo-big]").waitFor();
+      await back();
+      eq(await f.locator("[data-testid=photo-big]").count(), 0, "크게 보기 닫힘");
+      ok(await modalOpen(), "사진 창은 그대로");
+      await back();
+      ok(!(await modalOpen()));
+      await onApp();
+    });
+    await step("버튼으로 닫은 뒤 뒤로가기는 바로 장부를 나감(헛도는 뒤로가기 없음)", async () => {
+      await f.locator("[data-testid=add]").click();
+      await f.locator("#sheet [data-x]").first().click();
+      await page.waitForTimeout(400);
+      await page.evaluate(() => history.back());
+      await page.waitForURL(/\/start$/);
+    });
+    await c.close();
   }
 
   await step("콘솔·스크립트 오류 0건", async () => { eq(errors.length, 0, errors.join("\n")); });
