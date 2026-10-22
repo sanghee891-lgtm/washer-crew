@@ -90,7 +90,7 @@
     if (!box) return;
     var html = '<div class="login-in"><img class="login-logo" src="assets/logo.webp" alt="세탁기 크루">';
     if (!LOGIN.pick) {
-      html += "<h1>누구세요?</h1><p>내 이름을 누르세요.</p>";
+      html += "<h1>접속할 사용자를 선택해주세요</h1><p>선택한 사용자로 업무를 시작합니다.</p>";
       if (!LOGIN.names) html += '<p class="muted">불러오는 중…</p>';
       else if (!LOGIN.names.length) html += '<p class="login-err">' + esc(LOGIN.msg || "등록된 직원이 없어요. 사장님께 문의해 주세요.") + '</p><button class="btn wide" data-retry>다시 시도</button>';
       else html += '<div class="login-names">' + LOGIN.names.map(function (p) {

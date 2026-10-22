@@ -183,6 +183,8 @@ const ACCOUNTS = [
   await step("처음엔 로그인 화면: 계정 있는 직원 이름만", async () => {
     await p.waitForSelector("[data-testid=login-신창민]");
     eq(await p.locator(".login-names .btn").count(), 3);
+    eq(await p.innerText("#login h1"), "접속할 사용자를 선택해주세요");
+    eq(await p.innerText("#login .login-in > p"), "선택한 사용자로 업무를 시작합니다.");
     ok(!(await p.isVisible("#app")), "장부는 숨김");
   });
   await step("틀린 비밀번호 → 안내, 맞으면 장부 열림(이름 다시 고르지 않음)", async () => {
@@ -193,7 +195,7 @@ const ACCOUNTS = [
     await p.waitForSelector("#login", { state: "detached" });
     await p.waitForFunction(() => document.querySelector("#meName").textContent === "신창민님");
     await p.waitForSelector("[data-testid=card]");
-    ok(!(await p.isVisible("#modal")), "누구세요 창 없음");
+    ok(!(await p.isVisible("#modal")), "이름 고르기 창 없음");
   });
   await step("새로고침해도 로그인 유지", async () => {
     await p.reload();
