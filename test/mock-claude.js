@@ -125,6 +125,7 @@ function mockClaude(cfg) {
       var type = (opt && opt.type) || blob.type;
       if (!/^image\/(jpeg|png|webp)$/.test(type)) throw err("unsupported_type");
       var id = Array.from(crypto.getRandomValues(new Uint8Array(16))).map(function (b) { return ("0" + b.toString(16)).slice(-2); }).join("");
+      if (cfg.uploadDelay) await new Promise(function (r) { setTimeout(r, cfg.uploadDelay); }); // 느린 모바일망 흉내
       var r = await fetch("/_blob/" + id, { method: "PUT", body: blob, headers: { "content-type": type } });
       if (!r.ok) throw err("upstream_error");
       var m = upMap(); m[id] = { by: cfg.uid, size: blob.size }; localStorage.setItem(AKEY, JSON.stringify(m));

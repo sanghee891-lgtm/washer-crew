@@ -43,6 +43,7 @@
   var ICON = {
     phone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/></svg>',
     camera: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.5"/></svg>',
+    gallery: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="15" height="13" rx="2"/><path d="M6 21h13a2 2 0 0 0 2-2V8"/><path d="M3 15l4-4 4 4 2-2 5 5"/><circle cx="13.5" cy="9" r="1.5"/></svg>',
     pin: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>',
     close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>'
   };
@@ -1259,7 +1260,7 @@
   var KIND = { before: "작업 전", after: "작업 후" };
   function openPhotos(id) {
     if (!S.all[id]) return;
-    P = { id: id, view: null, confirmDel: false, busy: null };
+    P = { id: id, view: null, confirmDel: false };
     renderPhotos();
   }
 
@@ -1283,15 +1284,22 @@
           : '<button class="btn danger" data-pdel data-testid="photo-del">삭제</button>') : "") + "</div>";
     } else {
       html = "<h2>" + esc((r.customer || {}).name || "고객") + " 작업 사진</h2>";
-      if (P.busy) html += '<div class="banner info" data-testid="photo-busy">' + esc(P.busy) + "</div>";
+      var up = UP[P.id];
+      if (up && up.total) html += '<div class="banner info" data-testid="photo-busy">사진 ' + up.total + "장 중 " + up.done + "장 올렸어요. 창을 닫아도 계속 올라가요.</div>";
       ["before", "after"].forEach(function (kind) {
         var list = C.photoList(r, kind);
         html += '<div class="ph-sec"><div class="ph-h">' + KIND[kind] + ' <span class="num muted">' + list.length + "장</span></div>" +
           '<div class="ph-grid" data-testid="grid-' + kind + '">' + list.map(function (p, n) {
             return '<button class="ph" data-pv="' + esc(p.id) + '"><img src="/_blob/' + esc(p.id) + '" alt="' + KIND[kind] + " 사진 " + (n + 1) + '" loading="lazy"></button>';
           }).join("") +
-          (canUp ? '<label class="ph add" data-testid="add-' + kind + '">' + '<input type="file" accept="image/*" multiple class="vh" data-kind="' + kind + '" data-testid="file-' + kind + '">' +
-            ICON.camera + "<span>사진 추가</span></label>" : "") + "</div></div>";
+          // 고르자마자 미리보기, 올라가는 동안 표시
+          ((up && up.items) || []).filter(function (u) { return u.kind === kind; }).map(function (u) {
+            return '<div class="ph pending' + (u.failed ? " failed" : "") + '" data-testid="pending"><img src="' + esc(u.url) + '" alt=""><span>' + (u.failed ? "실패" : "올리는 중") + "</span></div>";
+          }).join("") +
+          (canUp ? '<label class="ph add" data-testid="add-' + kind + '"><input type="file" accept="image/*" multiple class="vh" data-kind="' + kind + '" data-testid="file-' + kind + '">' +
+              ICON.gallery + "<span>앨범에서<br>여러 장</span></label>" +
+            '<label class="ph add" data-testid="cam-' + kind + '"><input type="file" accept="image/*" capture="environment" class="vh" data-kind="' + kind + '">' +
+              ICON.camera + "<span>카메라로<br>찍기</span></label>" : "") + "</div></div>";
       });
       if (!canUp && S.conn === "ok") html += '<p class="muted" style="font-size:13px">사진을 올리려면 장부 주인에게 편집자로 초대받아야 해요.</p>';
       html += '<button class="btn wide" data-pclose>닫기</button>';
@@ -1337,7 +1345,7 @@
     });
   }
   async function compressImage(file) {
-    var MAX = 1600;
+    var MAX = 1280; // 휴대폰 화면에서 충분히 선명하고 올리는 시간은 짧게
     try {
       var img = await loadImage(file);
       var w0 = img.width || img.naturalWidth, h0 = img.height || img.naturalHeight;
@@ -1367,21 +1375,60 @@
     return "사진을 올리지 못했어요. 인터넷 연결을 확인하고 다시 올려 주세요.";
   }
 
+  // 예약별 업로드 진행 상태: {total, done, items:[{kind, url, failed}]}
+  var UP = {};
+  var writeChain = {};
+  var UPLOAD_AT_ONCE = 3;
+
+  // 같은 예약 문서에는 한 번에 하나씩 기록(동시에 쓰면 느려짐)
+  function recordPhoto(rid, assetId, kind, at) {
+    var patch = { photos: {} };
+    patch.photos[assetId] = { kind: kind, by: S.myStaffId || "", at: at };
+    var run = function () { return S.db.doc("reservations/" + rid).update(patch); };
+    writeChain[rid] = (writeChain[rid] || Promise.resolve()).then(run, run);
+    return writeChain[rid];
+  }
+
+  function refreshUploadView(rid) { if (P && P.id === rid && !P.view) renderPhotos(); }
+
   async function uploadPhotos(files, kind) {
     if (!P || !S.assets) return;
-    var id = P.id, ok = 0, err = null;
-    for (var i = 0; i < files.length; i++) {
-      if (P && P.id === id) { P.busy = "사진 올리는 중 " + (i + 1) + "/" + files.length + " (화면을 닫지 마세요)"; renderPhotos(); }
-      try {
-        var blob = await compressImage(files[i]);
-        var res = await S.assets.upload(blob, { type: blob.type || "image/jpeg" });
-        var patch = { photos: {} };
-        patch.photos[res.id] = { kind: kind, by: S.myStaffId || "", at: nowIso() };
-        await S.db.doc("reservations/" + id).update(patch);
-        ok++;
-      } catch (e) { err = e; }
+    var rid = P.id, ok = 0, err = null;
+    var up = UP[rid] = UP[rid] || { total: 0, done: 0, items: [] };
+    var jobs = files.map(function (f, i) {
+      var item = { kind: kind, url: URL.createObjectURL(f), failed: false };
+      up.items.push(item);
+      // 같은 순간 고른 사진도 고른 순서대로 정렬되게 시각을 조금씩 다르게
+      return { file: f, item: item, at: new Date(Date.now() + i).toISOString() };
+    });
+    up.total += jobs.length;
+    refreshUploadView(rid);
+    var next = 0;
+    async function worker() {
+      while (next < jobs.length) {
+        var job = jobs[next++];
+        try {
+          var blob = await compressImage(job.file);
+          var res = await S.assets.upload(blob, { type: blob.type || "image/jpeg" });
+          await recordPhoto(rid, res.id, kind, job.at);
+          ok++;
+          up.items.splice(up.items.indexOf(job.item), 1);
+          (function (u) { setTimeout(function () { URL.revokeObjectURL(u); }, 3000); })(job.item.url);
+        } catch (e) { err = e; job.item.failed = true; }
+        up.done++;
+        refreshUploadView(rid);
+      }
     }
-    if (P && P.id === id) { P.busy = null; renderPhotos(); }
+    var pool = [];
+    for (var w = 0; w < Math.min(UPLOAD_AT_ONCE, jobs.length); w++) pool.push(worker());
+    await Promise.all(pool);
+    // 실패한 미리보기는 잠깐 보여 준 뒤 정리
+    if (up.done >= up.total) {
+      var failed = up.items.slice();
+      setTimeout(function () { failed.forEach(function (it) { URL.revokeObjectURL(it.url); }); }, 4000);
+      delete UP[rid];
+      refreshUploadView(rid);
+    }
     if (err) toast((ok ? ok + "장은 올렸어요. " : "") + photoError(err));
     else toast(KIND[kind] + " 사진 " + ok + "장을 올렸어요.");
   }

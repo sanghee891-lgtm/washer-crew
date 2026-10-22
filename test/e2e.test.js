@@ -521,16 +521,16 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
     const small2 = await mkPng(600, 800, "#17784a");
     const imgsLoaded = (p, sel) => p.waitForFunction((sel) => { const xs = [...document.querySelectorAll(sel)]; return xs.length && xs.every((i) => i.complete && i.naturalWidth > 0); }, sel);
 
-    await step("사진 추가: 큰 사진은 1600px JPEG로 줄여서 올림", async () => {
+    await step("사진 추가: 큰 사진은 1280px JPEG로 줄여서 올림", async () => {
       ok((await txt(owner, "[data-testid=photos-btn]")).includes("사진 추가"));
       await owner.click("[data-testid=photos-btn]");
       await owner.setInputFiles("[data-testid=file-before]", { name: "before.png", mimeType: "image/png", buffer: big });
-      await owner.waitForFunction(() => document.querySelectorAll("[data-testid=grid-before] img").length === 1);
+      await owner.waitForFunction(() => document.querySelectorAll("[data-testid=grid-before] .ph[data-pv] img").length === 1 && !document.querySelector("[data-testid=pending]"));
       await imgsLoaded(owner, "[data-testid=grid-before] img");
-      await owner.click("[data-testid=grid-before] .ph");
+      await owner.click("[data-testid=grid-before] .ph[data-pv]");
       await imgsLoaded(owner, "[data-testid=photo-big]");
       const dim = await owner.evaluate(() => { const i = document.querySelector("[data-testid=photo-big]"); return [i.naturalWidth, i.naturalHeight]; });
-      eq(dim.join("x"), "1600x1067", "줄인 크기");
+      eq(dim.join("x"), "1280x853", "줄인 크기");
       const type = await owner.evaluate(() => fetch(document.querySelector("[data-testid=photo-big]").src).then((r) => r.headers.get("content-type")));
       eq(type, "image/jpeg");
       ok((await txt(owner, "#modal")).includes("김철수"), "올린 사람 표시");
@@ -539,7 +539,7 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
     await step("작업 후 사진 2장 한 번에 → 카드에 '사진 3'", async () => {
       await owner.setInputFiles("[data-testid=file-after]", [
         { name: "a1.png", mimeType: "image/png", buffer: small1 }, { name: "a2.png", mimeType: "image/png", buffer: small2 }]);
-      await owner.waitForFunction(() => document.querySelectorAll("[data-testid=grid-after] img").length === 2);
+      await owner.waitForFunction(() => document.querySelectorAll("[data-testid=grid-after] .ph[data-pv] img").length === 2 && !document.querySelector("[data-testid=pending]"));
       await imgsLoaded(owner, "[data-testid=grid-after] img");
       await noHScroll(owner);
       await owner.screenshot({ path: path.join(SHOTS, "m-photos.png") });
@@ -552,7 +552,7 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
       await staff.waitForFunction(() => (document.querySelector("[data-testid=photos-btn]") || {}).textContent === "사진 3");
       await staff.click("[data-testid=photos-btn]");
       await imgsLoaded(staff, "#modal .ph img");
-      await staff.click("[data-testid=grid-before] .ph");
+      await staff.click("[data-testid=grid-before] .ph[data-pv]");
       await staff.click("[data-testid=photo-del]");
       await staff.click("[data-testid=photo-del-yes]");
       await staff.waitForFunction(() => document.querySelector("#toast").textContent.includes("올린 사람이나 사장님만"));
@@ -561,15 +561,44 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
     });
     await step("직원이 올린 사진: 사장님 화면에 실시간 반영, 본인은 삭제 가능", async () => {
       await staff.setInputFiles("[data-testid=file-after]", { name: "s.png", mimeType: "image/png", buffer: small1 });
-      await staff.waitForFunction(() => document.querySelectorAll("[data-testid=grid-after] img").length === 3);
+      await staff.waitForFunction(() => document.querySelectorAll("[data-testid=grid-after] .ph[data-pv] img").length === 3 && !document.querySelector("[data-testid=pending]"));
       await owner.waitForFunction(() => document.querySelector("[data-testid=photos-btn]").textContent.includes("사진 4"));
-      await staff.click("[data-testid=grid-after] .ph >> nth=2");
+      await staff.click("[data-testid=grid-after] .ph[data-pv] >> nth=2");
       await staff.click("[data-testid=photo-del]");
       await staff.click("[data-testid=photo-del-yes]");
       await staff.waitForFunction(() => document.querySelectorAll("[data-testid=grid-after] img").length === 2);
       await owner.waitForFunction(() => document.querySelector("[data-testid=photos-btn]").textContent.includes("사진 3"));
       await staff.click("[data-pclose]");
     });
+    await step("여러 장 한꺼번에: 바로 미리보기, 동시에 올라감, 빠짐없이 저장", async () => {
+      const slow = await newPage(ctxP, { uid: "u_lee", uploadDelay: 600 }, errors);
+      await slow.goto(BASE);
+      await slow.waitForSelector("[data-testid=photos-btn]");
+      await slow.click("[data-testid=photos-btn]");
+      eq(await slow.locator("[data-testid=add-after]").innerText().then((t) => t.replace(/\s+/g, " ")), "앨범에서 여러 장");
+      ok(await slow.locator("[data-testid=cam-after] input[capture]").count() === 1, "카메라 버튼");
+      const files = [];
+      for (let i = 0; i < 6; i++) files.push({ name: "m" + i + ".png", mimeType: "image/png", buffer: small1 });
+      const t0 = Date.now();
+      await slow.setInputFiles("[data-testid=file-after]", files);
+      await slow.waitForFunction(() => document.querySelectorAll("[data-testid=pending]").length === 6, null, { timeout: 2000 });
+      ok((await txt(slow, "[data-testid=photo-busy]")).includes("6장 중"), "진행 표시");
+      await slow.screenshot({ path: path.join(SHOTS, "m-photos-uploading.png") });
+      await slow.waitForFunction(() => document.querySelectorAll("[data-testid=grid-after] img").length === 8 && !document.querySelector("[data-testid=pending]"), null, { timeout: 15000 });
+      const took = Date.now() - t0;
+      ok(took < 6 * 600 * 0.75, "한 장씩 올리면 3.6초 이상, 실제 " + took + "ms");
+      await owner.waitForFunction(() => document.querySelector("[data-testid=photos-btn]").textContent.includes("사진 9"));
+      ok(!(await slow.isVisible("[data-testid=photo-busy]")), "진행 표시 사라짐");
+      // 방금 올린 6장 정리
+      for (let i = 0; i < 6; i++) {
+        await slow.click("[data-testid=grid-after] .ph[data-pv] >> nth=2");
+        await slow.click("[data-testid=photo-del]");
+        await slow.click("[data-testid=photo-del-yes]");
+        await slow.waitForFunction((n) => document.querySelectorAll("[data-testid=grid-after] img").length === n, 7 - i);
+      }
+      await slow.close();
+    });
+
     await step("보기 전용은 사진 보기만(추가 버튼 없음)", async () => {
       const v = await newPage(ctxP, { uid: "u_view", readOnly: true }, errors);
       await v.goto(BASE);
