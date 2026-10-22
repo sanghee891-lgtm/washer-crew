@@ -288,5 +288,12 @@ t("이동 중·작업 중은 예정 매출로 집계", () => {
   assert.strictEqual(s.doneRevenue, 5000);
 });
 
+t("전화번호 형식 검사", () => {
+  assert.strictEqual(C.validateReservation(R({ customer: { name: "a", phone: "010-1234-5678" } })).phone, undefined);
+  assert.strictEqual(C.validateReservation(R({ customer: { name: "a", phone: "02-123-4567" } })).phone, undefined);
+  assert.ok(C.validateReservation(R({ customer: { name: "a", phone: "1234-5678" } })).phone, "0으로 시작");
+  assert.ok(C.validateReservation(R({ customer: { name: "a", phone: "010-1234" } })).phone, "자리수");
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

@@ -16,7 +16,7 @@ function mockSupabase(cfg) {
   }
   function save(d) { localStorage.setItem(KEY, JSON.stringify(d)); }
   if (!localStorage.getItem(KEY)) save(load());
-  window.__fakesb = { load: load, save: save, calls: [] };
+  window.__fakesb = { load: load, save: save, calls: [], cfg: cfg }; // cfg.offline = true 로 인터넷 끊김 흉내
 
   var handlers = [];
   function emit(table, path) { setTimeout(function () { handlers.forEach(function (h) { if (h.table === table) h.cb({ new: path ? { path: path } : {}, old: {} }); }); }, 0); }

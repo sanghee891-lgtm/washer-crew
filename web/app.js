@@ -1492,6 +1492,9 @@
     data.workers = data.workers || {};
     if (!Array.isArray(data.items) || !data.items.length) data.items = [{ type: "통돌이", model: "", qty: 1, work: "세척" }];
     F = { readOnly: !!(r && !canEditRes(r)), id: id, data: data, orig: r ? clone(r) : null, openedAt: r ? r.updatedAt || r.createdAt || "" : "", errors: {}, staleOk: false, confirmDel: false, hist: null, histFor: "", fromRequest: (prefill && prefill.fromRequest) || null, requestedAt: (prefill && prefill.requestedAt) || null };
+    if (!id) F.newId = S.db.collection("reservations").doc().id; // 다시 눌러도 같은 예약 번호 → 중복 예약 안 생김
+    var dr = loadDraft(id);
+    if (dr && dr.data && (!r || dr.at > (r.updatedAt || r.createdAt || "")) && !F.readOnly) F.draft = dr;
     renderForm();
     $("#sheet").hidden = false;
     document.body.style.overflow = "hidden";
@@ -1500,7 +1503,9 @@
     if (data.customer.phone) lookupHistory();
   }
 
-  function closeForm() {
+  function closeForm(saved) {
+    if (!saved) flushDraft(); else clearTimeout(draftTimer);
+    if (F && F.dirty && !saved) toast("입력한 내용은 이 휴대폰에 임시 저장해 두었어요. 다시 열면 불러올 수 있어요.");
     F = null;
     $("#sheet").hidden = true;
     $("#sheet").innerHTML = "";
@@ -1522,50 +1527,45 @@
     var html = '<div class="sheet-in" role="dialog" aria-modal="true" aria-labelledby="formTitle">' +
       '<div class="sheet-h wrap"><h2 id="formTitle">' + (F.id ? "예약 수정" : "새 예약") + '</h2><button class="icon-btn" data-x aria-label="닫기">' + ICON.close + "</button></div>" +
       '<form class="sheet-b wrap" id="form" novalidate>' +
-      '<div id="liveWarn"></div>' +
+      '<div id="liveWarn"></div><div id="draftNote"></div>' +
 
-      '<div class="fs"><h3>언제</h3><div class="f2">' +
+      '<div class="fs"><h3><span class="no">1</span>일정</h3><div class="f2">' +
         '<div class="f"><label for="f-date">예약일자</label><input class="inp" type="date" id="f-date" value="' + esc(d.date) + '" data-testid="f-date">' + (e.date ? '<span class="err">' + e.date + "</span>" : "") + "</div>" +
         '<div class="f"><label for="f-time">시작 시간</label><input class="inp" type="time" id="f-time" step="600" value="' + esc(d.time) + '" data-testid="f-time">' + (e.time ? '<span class="err">' + e.time + "</span>" : "") + "</div></div>" +
         '<div class="f"><span class="lab">소요시간</span>' +
           chipGroup("dur", DUR.concat(["custom"]), custom ? "custom" : d.durationMin, ["30분", "1시간", "1시간 30분", "2시간", "3시간", "4시간", "직접 입력"]) +
           (custom ? '<div style="display:flex;gap:8px;align-items:center"><input class="inp" id="f-durmin" type="number" inputmode="numeric" min="10" step="10" value="' + esc(d.durationMin) + '" style="max-width:120px" data-testid="f-durmin"> 분</div>' : "") +
-          '<div class="endinfo" id="endInfo"></div>' + (e.durationMin ? '<span class="err">' + e.durationMin + "</span>" : "") + "</div>" +
+          '<div class="endinfo" id="endInfo"></div>' + (e.durationMin ? '<span class="err">' + e.durationMin + "</span>" : "") + '<div class="wn" id="w-time"></div></div>' +
       "</div>" +
 
-      '<div class="fs"><h3>기기 · 작업</h3><div id="items" style="display:grid;gap:8px">' + d.items.map(itemHtml).join("") + "</div>" +
+      '<div class="fs"><h3><span class="no">2</span>작업 · 기기</h3><div id="items" style="display:grid;gap:8px">' + d.items.map(itemHtml).join("") + "</div>" +
         '<button type="button" class="btn" data-addi data-testid="add-item">+ 기기 추가</button>' + (e.items ? '<span class="err">' + e.items + "</span>" : "") + "</div>" +
 
-      '<div class="fs"><h3>고객</h3>' +
+      '<div class="fs" id="fsCust"><h3><span class="no">3</span><span id="custTitle">고객 · 방문 주소</span></h3>' +
         '<div class="f"><label for="f-phone">전화번호</label><input class="inp num" type="tel" inputmode="tel" id="f-phone" value="' + esc(c.phone) + '" placeholder="010-0000-0000" autocomplete="off" data-testid="f-phone">' + (e.phone ? '<span class="err">' + e.phone + "</span>" : "") + '<div id="hist"></div></div>' +
         '<div class="f"><label for="f-name">고객 이름</label><input class="inp" id="f-name" value="' + esc(c.name) + '" placeholder="예: 김민지" autocomplete="off" data-testid="f-name"></div>' +
         (e.customer ? '<span class="err">' + e.customer + "</span>" : "") +
-        '<div class="f"><label for="f-addr" id="addrLabel">주소</label><input class="inp" id="f-addr" value="' + esc(c.address) + '" placeholder="예: 수원시 영통구 ○○아파트 101동 1203호" autocomplete="off" data-testid="f-addr"></div>' +
+        '<div class="f"><label for="f-addr" id="addrLabel">방문 주소</label><input class="inp" id="f-addr" value="' + esc(c.address) + '" placeholder="예: 수원시 영통구 ○○아파트 101동 1203호" autocomplete="off" data-testid="f-addr"></div>' +
         '<div class="move" id="moveBlock" hidden data-testid="move-block">' +
           '<div class="f"><label for="f-addr2">도착지 주소 (설치하는 곳)</label><input class="inp" id="f-addr2" value="' + esc(d.moveTo.address) + '" placeholder="예: 용인시 기흥구 ○○아파트 105동 701호" autocomplete="off" data-testid="f-addr2"></div>' +
           '<div class="f2"><div class="f"><label for="f-floor2">도착지 층수</label><input class="inp" id="f-floor2" inputmode="numeric" value="' + esc(d.moveTo.floor) + '" placeholder="예: 7"></div>' +
           '<div class="f"><span class="lab">도착지 엘리베이터</span>' + chipGroup("elevator2", ["있음", "없음"], d.moveTo.elevator) + "</div></div>" +
         "</div>" +
+        '<div class="wn" id="w-addr"></div><div class="wn" id="w-dup" data-testid="dup-warn"></div>' +
       "</div>" +
 
-      '<div class="fs"><h3>금액 · 결제</h3>' +
-        '<div class="f"><label for="f-total">총 금액</label><div class="won-inp"><input class="inp num" id="f-total" inputmode="numeric" value="' + (d.total ? C.formatWon(d.total) : "") + '" placeholder="0" data-testid="f-total"><span>원</span></div>' + (e.total ? '<span class="err">' + e.total + "</span>" : "") + "</div>" +
+      '<div class="fs"><h3><span class="no">4</span>금액 · 배정</h3>' +
+        '<div class="f"><label for="f-total">총 금액</label><div class="won-inp"><input class="inp num" id="f-total" inputmode="numeric" value="' + (d.total ? C.formatWon(d.total) : "") + '" placeholder="0" data-testid="f-total"><span>원</span></div>' + (e.total ? '<span class="err">' + e.total + "</span>" : "") + '<div class="wn" id="w-total"></div></div>' +
         '<div class="f"><span class="lab">결제방법</span>' + chipGroup("method", C.PAY_METHODS, d.payment.method) + "</div>" +
         '<label class="toggle"><input type="checkbox" id="f-paid"' + (d.payment.paid ? " checked" : "") + ' data-testid="f-paid">입금 확인됨</label>' +
-      "</div>" +
-
-      '<div class="fs"><h3>작업자</h3>' +
         '<div class="f"><span class="lab">필요 인원</span>' + chipGroup("needed", [1, 2, 3, 4], d.needed || 2, ["1명", "2명", "3명", "4명"]) + "</div>" +
         '<div class="f"><span class="lab">참여 직원 (눌러서 선택)</span><div class="chips" data-testid="f-workers">' +
           (S.staff.length ? S.staff.map(function (p) {
             return '<button type="button" class="chip" data-w="' + esc(p.id) + '" aria-pressed="' + (d.workers[p.id] === true) + '">' + esc(p.name) + "</button>";
-          }).join("") : '<span class="muted">직원·설정에서 명단을 먼저 넣어 주세요.</span>') + "</div></div>" +
+          }).join("") : '<span class="muted">직원·설정에서 명단을 먼저 넣어 주세요.</span>') + '</div><div class="wn" id="w-crew"></div></div>' +
+        (F.id ? '<div class="f"><span class="lab">진행 상태</span>' + chipGroup("status", ["scheduled", "moving", "working", "done", "canceled"], d.status, ["확정", "이동 중", "작업 중", "완료", "취소"]) + "</div>" : "") +
       "</div>" +
-
-      '<div class="fs"><h3>상태</h3>' + chipGroup("status", ["scheduled", "moving", "working", "done", "canceled"], d.status, ["확정", "이동 중", "작업 중", "완료", "취소"]) + "</div>" +
-      '<div class="fs"><h3>작업 사진</h3><div id="photoLine"></div></div>' +
-
-      '<div class="fs"><div class="f"><label for="f-note">메모</label><textarea class="inp" id="f-note" placeholder="고객 요청사항 등">' + esc(d.note) + "</textarea></div></div>" +
+      '<div class="fs"><div class="f"><label for="f-note">메모 (고객 요청사항)</label><textarea class="inp" id="f-note" placeholder="고객 요청사항 등">' + esc(d.note) + "</textarea></div></div>" +
 
       '<details class="fs"' + (site.floor || site.elevator || site.parking || site.memo ? " open" : "") + '><summary>현장 정보 (층수·엘리베이터·주차)</summary>' +
         '<div class="f2"><div class="f"><label for="f-floor">층수</label><input class="inp" id="f-floor" inputmode="numeric" value="' + esc(site.floor) + '" placeholder="예: 12"></div>' +
@@ -1573,6 +1573,7 @@
         '<div class="f"><span class="lab">주차</span>' + chipGroup("parking", ["가능", "불가"], site.parking) + "</div>" +
         '<div class="f"><label for="f-sitememo">현장 메모</label><textarea class="inp" id="f-sitememo" placeholder="예: 베란다 배수구 좁음, 공동현관 비번 1234">' + esc(site.memo) + "</textarea></div>" +
       "</details>" +
+      (F.id ? '<div class="fs"><h3>작업 사진</h3><div id="photoLine"></div></div>' : "") +
 
       (F.orig ? '<div class="fs"><h3>진행 기록</h3>' + stepperHtml(F.orig) + logHtml(F.orig) + "</div>" : "") +
       (meta ? '<p class="meta-line">' + esc(meta) + "</p>" : "") +
@@ -1616,8 +1617,10 @@
       return;
     }
     if (F.readOnly) { foot.innerHTML = '<button class="btn primary grow" data-x data-testid="close-view">닫기</button>'; return; }
-    foot.innerHTML = (F.id ? '<button class="btn danger" data-del data-testid="del">삭제</button>' : '<button class="btn" data-x>닫기</button>') +
-      '<button class="btn primary grow" data-save data-testid="save">' + (F.id ? "수정 저장" : "예약 저장") + "</button>";
+    var label = saving ? "저장 중…" : F.saveErr ? "다시 저장" : F.dupOk ? "그래도 저장" : F.id ? "수정 저장" : "예약 저장";
+    foot.innerHTML = (F.saveErr ? '<div class="save-err" data-testid="save-err">저장 실패 · ' + esc(F.saveErr) + " 입력한 내용은 그대로 있어요.</div>" : "") +
+      (F.id ? '<button class="btn danger" data-del data-testid="del">삭제</button>' : '<button class="btn" data-x>닫기</button>') +
+      '<button class="btn primary grow" data-save data-testid="save"' + (saving ? " disabled" : "") + ">" + label + "</button>";
   }
 
   function readForm() {
@@ -1643,7 +1646,8 @@
       it.type = row.querySelector("[data-k=type]").value;
       it.work = row.querySelector("[data-k=work]").value;
       it.model = row.querySelector("[data-k=model]").value.trim();
-      it.qty = Math.max(1, parseInt(row.querySelector("[data-k=qty]").value, 10) || 1);
+      var q = parseInt(row.querySelector("[data-k=qty]").value, 10);
+      it.qty = q > 0 ? q : 0;
     });
     return d;
   }
@@ -1654,7 +1658,7 @@
     // 이전설치가 있으면 출발지/도착지
     var mv = C.isMove(d);
     $("#moveBlock").hidden = !mv;
-    $("#addrLabel").textContent = mv ? "출발지 주소 (철거하는 곳)" : "주소";
+    $("#addrLabel").textContent = mv ? "출발지 주소 (철거하는 곳)" : "방문 주소";
     var pl = $("#photoLine");
     if (pl) {
       var cur = F.id && S.all[F.id];
@@ -1672,10 +1676,63 @@
       var who = staffName(S.all[F.id].updatedBy);
       warn += '<div class="stale" data-testid="stale">' + esc(who ? who + "님이" : "다른 사람이") + " 방금 이 예약을 고쳤어요. 저장하면 내 입력으로 덮어써요.</div>";
     }
-    var cand = Object.assign({}, d, { id: F.id || "__new__" });
-    var cf = conflictsOf(cand)[cand.id];
-    if (cf) warn += '<div class="conflict" data-testid="form-conflict">시간 겹침: ' + esc(conflictText(cand, cf)) + ". 그래도 저장할 수 있어요.</div>";
     $("#liveWarn").innerHTML = warn ? '<div style="display:grid;gap:8px;margin-bottom:10px">' + warn + "</div>" : "";
+    var w = formWarnings(d);
+    ["time", "addr", "dup", "total", "crew"].forEach(function (k) { var el = $("#w-" + k); if (el) el.innerHTML = w[k] || ""; });
+    $("#custTitle").textContent = mv ? "고객 · 출발지 · 도착지" : "고객 · 방문 주소";
+    $("#fsCust").classList.toggle("move-on", mv);
+    renderDraftNote();
+  }
+  // 저장 전에 확인할 점(저장은 가능): 시간 겹침, 인원 부족, 다음날로 넘어가는 종료, 주소 누락, 금액 0원, 같은 고객·주소 중복
+  function formWarnings(d) {
+    var w = {}, id = F.id || "__new__";
+    var cand = Object.assign({}, d, { id: id });
+    var line = function (cls, text, tid) { return '<div class="' + cls + '"' + (tid ? ' data-testid="' + tid + '"' : "") + ">" + esc(text) + "</div>"; };
+    var end = C.endTime(d.time, d.durationMin);
+    if (/다음날/.test(end)) w.time = line("conflict", "끝나는 시간이 다음날(" + end.replace(" (다음날)", "") + ")이에요. 시작 시간과 소요시간을 확인하세요.");
+    var cf = conflictsOf(cand)[id], crewN = Object.keys(d.workers || {}).filter(function (k) { return d.workers[k] === true && staffName(k); }).length;
+    w.crew = (cf ? line("conflict", "시간 겹침: " + conflictText(cand, cf) + ". 그래도 저장할 수 있어요.", "form-conflict") : "") +
+      (d.status === "scheduled" && crewN < (+d.needed || 2) ? line("conflict", "필요 인원 " + (+d.needed || 2) + "명 중 " + crewN + "명만 배정됐어요.", "crew-short") : "");
+    var c = d.customer || {}, to = d.moveTo || {};
+    if (C.isMove(d) && (!String(c.address || "").trim() || !String(to.address || "").trim())) w.addr = line("conflict", "이전설치는 출발지와 도착지 주소가 모두 필요해요.", "addr-missing");
+    else if (!C.isMove(d) && !String(c.address || "").trim()) w.addr = line("conflict", "방문 주소가 비어 있어요.", "addr-missing");
+    if (!C.parseWon(d.total)) w.total = line("conflict", "금액이 0원이에요. 정해지면 넣어 주세요.", "total-zero");
+    var dup = dupOf(d, id);
+    if (dup) w.dup = line("conflict", dup.text, "dup");
+    return w;
+  }
+  // 같은 날 같은 전화번호(또는 같은 주소)로 이미 있는 예약
+  function dupOf(d, id) {
+    var digits = C.normalizePhone((d.customer || {}).phone), addr = String((d.customer || {}).address || "").trim();
+    var same = list().filter(function (r) { return r.id !== id && r.date === d.date && r.status !== "canceled"; });
+    var byPhone = digits.length >= 9 && same.filter(function (r) { return (r.phoneDigits || C.normalizePhone((r.customer || {}).phone)) === digits; })[0];
+    if (byPhone) return { r: byPhone, text: "같은 고객(전화번호)이 이날 " + byPhone.time + "에 이미 예약돼 있어요. 중복이 아닌지 확인하세요." };
+    var byAddr = addr && same.filter(function (r) { return String((r.customer || {}).address || "").trim() === addr; })[0];
+    if (byAddr) return { r: byAddr, text: "같은 주소로 이날 " + byAddr.time + "에 이미 예약이 있어요. 중복이 아닌지 확인하세요." };
+    return null;
+  }
+
+  // ---- 임시 저장: 입력하던 내용은 이 기기에 바로바로 저장, 다시 열면 불러오기 ----
+  function draftKey(id) { return "draft." + (S.uid || "local") + "." + (id || "new"); }
+  var draftTimer = null;
+  function saveDraftSoon() {
+    if (!F || F.readOnly) return;
+    F.dirty = true;
+    clearTimeout(draftTimer);
+    draftTimer = setTimeout(flushDraft, 300);
+  }
+  // 저장을 누르거나 창을 닫을 때는 기다리지 않고 바로 임시 저장
+  function flushDraft() {
+    clearTimeout(draftTimer);
+    if (F && F.dirty && !F.readOnly) store(draftKey(F.id), JSON.stringify({ at: nowIso(), data: F.data }));
+  }
+  function dropDraft(id) { clearTimeout(draftTimer); try { localStorage.removeItem("wb." + draftKey(id)); } catch (e) { /* 무시 */ } }
+  function loadDraft(id) { try { return JSON.parse(store(draftKey(id)) || "null"); } catch (e) { return null; } }
+  function renderDraftNote() {
+    var el = $("#draftNote");
+    if (!el) return;
+    el.innerHTML = F.draft ? '<div class="banner info draft" data-testid="draft-note"><span>저장하지 않은 입력이 있어요 (' + esc(fmtStamp(F.draft.at)) + ").</span>" +
+      '<button type="button" class="btn primary" data-draft-load data-testid="draft-load">불러오기</button><button type="button" class="btn" data-draft-drop>버리기</button></div>' : "";
   }
 
   var histTimer = null;
@@ -1720,6 +1777,14 @@
       if (t.closest("[data-delno]")) { F.confirmDel = false; renderFoot(); return; }
       if (t.closest("[data-delyes]")) return del();
       if (t.closest("[data-photos]") && F.id) return openPhotos(F.id);
+      if (t.closest("[data-draft-load]") && F.draft) {
+        var dd = F.draft.data;
+        F.data = Object.assign(F.data, dd, { customer: Object.assign({}, F.data.customer, dd.customer), site: Object.assign({}, F.data.site, dd.site),
+          moveTo: Object.assign({}, F.data.moveTo, dd.moveTo), payment: Object.assign({}, F.data.payment, dd.payment), workers: Object.assign({}, dd.workers) });
+        if (!Array.isArray(F.data.items) || !F.data.items.length) F.data.items = [{ type: "통돌이", model: "", qty: 1, work: "세척" }];
+        F.draft = null; renderForm(); toast("작성하던 내용을 불러왔어요."); return;
+      }
+      if (t.closest("[data-draft-drop]")) { dropDraft(F.id); F.draft = null; renderDraftNote(); return; }
       if (t.closest("[data-addi]")) {
         readForm();
         var lastType = F.data.items.length ? F.data.items[F.data.items.length - 1].work : "세척";
@@ -1732,7 +1797,7 @@
       if (q) {
         var inp = q.parentNode.querySelector("[data-k=qty]");
         inp.value = Math.max(1, (parseInt(inp.value, 10) || 1) + +q.getAttribute("data-q"));
-        readForm(); return;
+        readForm(); saveDraftSoon(); return;
       }
       if (t.closest("[data-fill]") && F.hist && F.hist.length) {
         var last = F.hist[0];
@@ -1749,7 +1814,7 @@
         var id = w.getAttribute("data-w");
         F.data.workers[id] = !(F.data.workers[id] === true);
         w.setAttribute("aria-pressed", String(F.data.workers[id]));
-        refreshFormLive(); return;
+        refreshFormLive(); saveDraftSoon(); return;
       }
       var chip = t.closest("[data-f]");
       if (chip) {
@@ -1773,6 +1838,7 @@
           b.setAttribute("aria-pressed", String(String(val) === b.getAttribute("data-v")));
         });
         refreshFormLive();
+        saveDraftSoon();
       }
     };
     form.addEventListener("input", function (e) {
@@ -1782,9 +1848,11 @@
       }
       readForm();
       if (e.target.id === "f-phone") lookupHistory();
+      F.dupOk = false;
       refreshFormLive();
+      saveDraftSoon();
     });
-    form.addEventListener("change", function () { readForm(); refreshFormLive(); });
+    form.addEventListener("change", function () { readForm(); refreshFormLive(); saveDraftSoon(); });
     var ph = $("#f-phone");
     ph.addEventListener("blur", function () { ph.value = C.formatPhone(ph.value); });
   }
@@ -1797,15 +1865,26 @@
   var saving = false;
   async function save() {
     if (saving || F.readOnly) return;
+    flushDraft();
     var d = F.data;
+    var qtyMissing = (d.items || []).some(function (it) { return it && it.type && !(it.qty > 0); });
     d.items = C.cleanItems(d.items);
     F.errors = C.validateReservation(d);
+    if (qtyMissing) F.errors.items = "기기 대수를 넣어 주세요.";
     if (Object.keys(F.errors).length) {
       var y = $(".sheet-b").scrollTop;
       renderForm();
       var firstErr = $(".sheet-b .err");
       if (firstErr) firstErr.scrollIntoView({ block: "center" }); else $(".sheet-b").scrollTop = y;
       toast("빨간 글씨 항목을 확인해 주세요.");
+      return;
+    }
+    // 같은 날 같은 고객 예약이 있으면 한 번 더 확인
+    if (!F.id && dupOf(d, "__new__") && !F.dupOk) {
+      F.dupOk = true;
+      refreshFormLive(); renderFoot();
+      var dw = $("#w-dup"); if (dw) dw.scrollIntoView({ block: "center" });
+      toast("같은 고객 예약이 이미 있어요. 중복이 아니면 [그래도 저장]을 누르세요.");
       return;
     }
     var cur = F.id ? S.all[F.id] : null;
@@ -1828,6 +1907,9 @@
       updatedBy: me, updatedAt: nowIso()
     };
     saving = true;
+    var form = F;
+    form.saveErr = null;
+    renderFoot();
     try {
       if (F.id && cur) {
         // 참여 직원은 바뀐 사람만 병합 → 다른 직원이 동시에 누른 참여가 지워지지 않음
@@ -1840,7 +1922,8 @@
         if (F.orig && !!(F.orig.payment || {}).paid !== !!d.payment.paid && body.log) body.log[Date.now().toString(36) + "_p_" + me] = { s: d.payment.paid ? "paid" : "unpaid", by: me, at: nowIso() };
         else if (F.orig && !!(F.orig.payment || {}).paid !== !!d.payment.paid) logPatch(body, d.payment.paid ? "paid" : "unpaid");
         await S.db.doc("reservations/" + F.id).update(body);
-        toast("수정했어요.");
+        dropDraft(F.id);
+        toast("저장 완료 · 수정했어요.");
       } else {
         var w = {};
         Object.keys(d.workers).forEach(function (k) { if (d.workers[k] === true && staffName(k)) w[k] = true; });
@@ -1848,16 +1931,20 @@
         body.createdBy = me;
         if (F.requestedAt) { body.log = {}; body.log["req_" + Date.now().toString(36)] = { s: "request", by: "", at: F.requestedAt }; }
         body.createdAt = body.updatedAt;
-        var ref = F.id ? S.db.doc("reservations/" + F.id) : S.db.collection("reservations").doc();
+        var ref = S.db.doc("reservations/" + (F.id || F.newId));
         await ref.set(body);
+        dropDraft(F.id);
         if (F.fromRequest && S.bookings) S.bookings.accept(F.fromRequest, ref.id).catch(function () { /* 요청 목록에 남으면 다시 처리 */ });
         if (C.ymOf(d.date) !== S.ym) setMonth(C.ymOf(d.date));
-        toast(C.dayLabel(d.date) + " " + d.time + " 예약을 저장했어요.");
+        toast("저장 완료 · " + C.dayLabel(d.date) + " " + d.time + " 예약");
       }
-      closeForm();
+      closeForm(true);
     } catch (e) {
-      toast(writeError(e));
-    } finally { saving = false; }
+      // 실패해도 입력은 그대로 두고, 이 기기에 임시 저장
+      form.saveErr = navigator.onLine === false ? "인터넷 연결이 끊겼어요." : writeError(e);
+      store(draftKey(form.id), JSON.stringify({ at: nowIso(), data: form.data }));
+      toast("저장 실패 · " + form.saveErr);
+    } finally { saving = false; if (F === form) renderFoot(); }
   }
 
   async function del() {

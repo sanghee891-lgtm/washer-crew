@@ -308,7 +308,8 @@
     if (!(+r.durationMin > 0)) errors.durationMin = "소요시간을 고르세요.";
     var c = r.customer || {};
     if (!String(c.name || "").trim() && !normalizePhone(c.phone)) errors.customer = "고객 이름이나 전화번호 중 하나는 넣어 주세요.";
-    if (c.phone && normalizePhone(c.phone).length > 0 && normalizePhone(c.phone).length < 8) errors.phone = "전화번호 자리수를 확인하세요.";
+    var pd = normalizePhone(c.phone);
+    if (pd.length > 0 && (pd.length < 9 || pd.length > 11 || pd[0] !== "0")) errors.phone = "전화번호 형식을 확인하세요. (예: 010-1234-5678)";
     if (!cleanItems(r.items).length) errors.items = "기기를 하나 이상 넣어 주세요.";
     if (parseWon(r.total) < 0) errors.total = "금액은 0원 이상이어야 해요.";
     if (!(r.status in STATUS)) errors.status = "상태를 고르세요.";

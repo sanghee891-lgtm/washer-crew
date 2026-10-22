@@ -662,7 +662,7 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
     await step("이전설치 선택 시 출발지·도착지 입력 → 카드·내비에 반영", async () => {
       await owner.click("[data-testid=card] [data-act=detail]");
       ok(await owner.isHidden("[data-testid=move-block]"), "세척만일 땐 숨김");
-      eq(await txt(owner, "#addrLabel"), "주소");
+      eq(await txt(owner, "#addrLabel"), "방문 주소");
       await owner.selectOption("[data-testid=item] >> nth=0 >> [data-testid=item-work]", "이전설치");
       await owner.waitForSelector("[data-testid=move-block]", { state: "visible" });
       eq(await txt(owner, "#addrLabel"), "출발지 주소 (철거하는 곳)");
@@ -869,7 +869,8 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
       await kim.click("[data-testid=add]");
       const order = await kim.evaluate(() => {
         const hs = [...document.querySelectorAll("#form .fs > h3")].map((h) => h.textContent);
-        return hs.indexOf("기기 · 작업") < hs.indexOf("고객");
+        const at = (w) => hs.findIndex((h) => h.includes(w));
+        return at("작업 · 기기") >= 0 && at("작업 · 기기") < at("고객");
       });
       ok(order, "순서");
       await kim.fill("[data-testid=f-name]", "알림고객");

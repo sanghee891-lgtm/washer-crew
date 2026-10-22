@@ -72,6 +72,8 @@ const ACCOUNTS = [
   { uid: "u-shin", staffId: "smvivcjg03", pin: "333333", owner: true }
 ];
 
+async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", ""); await page.type("[data-testid=f-total]", String(v)); }
+
 (async () => {
   await new Promise((r) => server.listen(0, r));
   const BASE = "http://127.0.0.1:" + server.address().port + "/";
@@ -323,6 +325,65 @@ const ACCOUNTS = [
     ok(log.every((e) => e.by === "smvivcjg03" && e.at), "변경한 사람·시각");
     await kimCard().locator("[data-testid=status-log]").waitFor();
     ok((await kimCard().locator("[data-testid=status-log]").innerText()).includes("이동 시작 · 신창민"));
+  });
+
+  // ---------------- 저장 전 점검·임시 저장·저장 상태 ----------------
+  console.log("저장 전 점검·임시 저장·저장 상태");
+  const openNew = async () => { await p.click("[data-testid=add]"); await p.waitForSelector("#sheet:not([hidden]) [data-testid=f-name]"); };
+  const closeSheet = async () => { await p.click("#sheet [data-x] >> nth=0"); await p.waitForSelector("#sheet", { state: "hidden" }); };
+  await step("입력 화면이 1 일정 → 2 작업·기기 → 3 고객·주소 → 4 금액·배정 순서", async () => {
+    await openNew();
+    const hs = await p.$$eval("#form .fs > h3", (h) => h.map((x) => x.textContent));
+    eq(hs.slice(0, 4), ["1일정", "2작업 · 기기", "3고객 · 방문 주소", "4금액 · 배정"]);
+    ok(!(await p.isVisible("#f-floor")), "현장 정보는 접혀 있음");
+  });
+  await step("항목 옆 확인 문구: 인원 부족·금액 0원·주소 누락, 전화번호 형식은 저장 막음", async () => {
+    await p.fill("[data-testid=f-name]", "점검고객");
+    await p.fill("[data-testid=f-phone]", "1234-5678");
+    for (const t of ["crew-short", "total-zero", "addr-missing"]) ok(await p.isVisible(`[data-testid=${t}]`), "확인 문구 " + t);
+    await p.click("[data-testid=save]");
+    await p.waitForFunction(() => [...document.querySelectorAll("#sheet .err")].some((e) => e.textContent.includes("전화번호 형식")));
+    eq(Object.values((await fakeDb(p)).docs).filter((d) => d.customer && d.customer.name === "점검고객").length, 0, "저장 안 됨");
+  });
+  await step("닫았다 다시 열면 '저장하지 않은 입력' 불러오기", async () => {
+    await closeSheet();
+    await openNew();
+    await p.waitForSelector("[data-testid=draft-note]");
+    await p.click("[data-testid=draft-load]");
+    eq(await p.inputValue("[data-testid=f-name]"), "점검고객");
+    await closeSheet();
+  });
+  await step("같은 날 같은 고객이면 한 번 더 확인 후 저장", async () => {
+    await p.evaluate(() => { for (const k of Object.keys(localStorage)) if (k.startsWith("wb.draft.")) localStorage.removeItem(k); });
+    await openNew();
+    await p.fill("[data-testid=f-date]", TOMORROW);
+    await p.fill("[data-testid=f-phone]", "010-1234-5678");
+    await p.fill("[data-testid=f-name]", "중복고객");
+    await p.fill("[data-testid=f-addr]", "수원");
+    await p.waitForSelector("[data-testid=dup]");
+    await p.click("[data-testid=save]");
+    eq(await p.innerText("[data-testid=save]"), "그래도 저장");
+    ok(await p.isVisible("#sheet:not([hidden])"), "아직 열려 있음");
+    await p.click("[data-testid=save]");
+    await p.waitForSelector("#sheet", { state: "hidden" });
+    eq(Object.values((await fakeDb(p)).docs).filter((d) => d.customer && String(d.customer.phone).replace(/\D/g, "") === "01012345678" && d.date === TOMORROW).length, 2, "같은 번호 예약 2건");
+  });
+  await step("인터넷이 끊기면 '저장 실패'와 입력 유지, 다시 저장해도 한 건만", async () => {
+    await openNew();
+    await p.fill("[data-testid=f-name]", "끊김고객");
+    await p.fill("[data-testid=f-addr]", "용인");
+    await setTotalWeb(p, "90000");
+    await p.evaluate(() => { window.__fakesb.cfg.offline = true; });
+    await p.click("[data-testid=save]");
+    await p.waitForSelector("[data-testid=save-err]");
+    eq(await p.innerText("[data-testid=save]"), "다시 저장");
+    eq(await p.inputValue("[data-testid=f-name]"), "끊김고객", "입력 그대로");
+    await p.evaluate(() => { window.__fakesb.cfg.offline = false; });
+    await p.click("[data-testid=save]");
+    await p.click("[data-testid=save]").catch(() => {}); // 두 번 눌러도
+    await p.waitForSelector("#sheet", { state: "hidden" });
+    await p.waitForTimeout(200);
+    eq(Object.values((await fakeDb(p)).docs).filter((d) => d.customer && d.customer.name === "끊김고객").length, 1, "중복 없이 한 건");
   });
 
   // ---------------- 6. 사진(비공개 보관함) ----------------
