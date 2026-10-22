@@ -84,6 +84,8 @@ const ACCOUNTS = [
       if (m.type() === "error" && !(label === "book" && /status of 400/.test(m.text()))) errors.push(label + " console: " + m.text());
     });
     page.on("response", (r) => { if (r.status() === 404) errors.push(label + " 404: " + r.url()); });
+    // 글꼴(Pretendard) CDN은 시험 환경에서 막혀 있어 빈 스타일로 대신함
+    page.route("**/pretendard@*/**", (r) => r.fulfill({ contentType: "text/css", body: "/* font stub */" }));
     return page;
   }
   // 가짜 Supabase 로 연 장부. seed: { docs, bookings } , session: 로그인한 uid

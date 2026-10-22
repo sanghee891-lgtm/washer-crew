@@ -63,8 +63,11 @@ const nm = new Date(now.getFullYear(), now.getMonth() + 1, 5);
 const NEXT_DAY = nm.getFullYear() + "-" + pad(nm.getMonth() + 1) + "-05";
 const NEXT_YM = NEXT_DAY.slice(0, 7);
 
+// 글꼴(Pretendard)은 CDN에서 받는데 시험 환경은 바깥 인터넷이 막혀 있어 빈 스타일로 대신함
+function stubFont(page) { return page.route("**/pretendard@*/**", (r) => r.fulfill({ contentType: "text/css", body: "/* font stub */" })); }
 async function newPage(ctx, cfg, errors) {
   const page = await ctx.newPage();
+  await stubFont(page);
   await page.addInitScript(mockClaude, cfg);
   page.on("pageerror", (e) => errors.push("pageerror: " + e.message));
   page.on("console", (m) => { if (m.type() === "error") errors.push("console: " + m.text()); });
@@ -335,7 +338,7 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
     const imgs = await p1.$$eval("img", (xs) => xs.map((i) => [i.getAttribute("src"), i.complete && i.naturalWidth > 0]));
     ok(imgs.length >= 2 && imgs.every((x) => x[1]), "이미지 로드 실패: " + JSON.stringify(imgs));
     const font = await p1.evaluate(() => getComputedStyle(document.body).fontFamily);
-    ok(font.startsWith('"Noto Sans KR"'), font);
+    ok(font.startsWith('"Pretendard Variable"'), font);
     await p1.screenshot({ path: path.join(SHOTS, "m-settings.png"), fullPage: true });
   });
 
@@ -700,6 +703,7 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
   {
     const c = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true });
     const page = await c.newPage();
+    await stubFont(page);
     page.on("pageerror", (e) => errors.push("pageerror: " + e.message));
     await page.addInitScript(mockClaude, { uid: "u_back" });
     await page.goto(BASE + "start");

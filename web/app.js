@@ -58,6 +58,14 @@
     return (d.getMonth() + 1) + "/" + d.getDate() + " " + C.pad(d.getHours()) + ":" + C.pad(d.getMinutes());
   }
 
+  // 장부 위쪽 알림 카드의 둥근 아이콘
+  var ICON_NT = {
+    new: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4M12 13v5M9.5 15.5h5"/></svg>',
+    req: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="8" r="3.5"/><path d="M3.5 20c.8-3.5 3.4-5.5 6.5-5.5 1.6 0 3 .5 4.1 1.4M18 14v6M15 17h6"/></svg>',
+    remind: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9l-5 4V6a1 1 0 0 1 1-1z"/><path d="M8 10h8M8 13h5"/></svg>',
+    push: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg>'
+  };
+  function ntIc(k) { return '<span class="nt-ic" aria-hidden="true">' + ICON_NT[k] + "</span>"; }
   var ICON = {
     phone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/></svg>',
     camera: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.5"/></svg>',
@@ -145,7 +153,8 @@
   async function boot() {
     S.tab = "list"; // 항상 예약목록에서 시작(뒤로가기 순서가 단순해짐)
     S.myStaffId = store(meKey()) || null;
-    var mq = window.matchMedia("(min-width: 900px)");
+    // 표는 옆으로 밀지 않고 한 화면에 들어오는 넓은 화면(1100px~)에서만, 그보다 좁으면 카드
+    var mq = window.matchMedia("(min-width: 1100px)");
     S.wide = mq.matches;
     var onMq = function () { S.wide = mq.matches; S.renderedTab = null; render(); };
     if (mq.addEventListener) mq.addEventListener("change", onMq); else mq.addListener(onMq);
@@ -354,7 +363,7 @@
   }
   function reqNoticeHtml() {
     if (!S.reqs.length) return "";
-    return '<div class="notice req" data-testid="req-notice"><div class="notice-h"><b>고객 예약 요청 ' + S.reqs.length + "건</b>" +
+    return '<div class="notice req" data-testid="req-notice"><div class="notice-h">' + ntIc("req") + '<b>고객 예약 요청 ' + S.reqs.length + "건</b>" +
       '<button class="btn primary" data-act="open-reqs" data-testid="open-reqs">보기</button></div>' +
       S.reqs.slice(0, 3).map(function (q) { return '<div class="notice-line">' + esc(reqLine(q)) + "</div>"; }).join("") + "</div>";
   }
@@ -428,7 +437,7 @@
     var l = tomorrowList();
     var done = l.filter(function (r) { return S.sent[r.id]; }).length;
     if (!l.length || done >= l.length) return "";
-    return '<div class="notice remind" data-testid="remind-notice"><div class="notice-h"><b>내일 예약 ' + l.length + "건 확인 문자</b>" +
+    return '<div class="notice remind" data-testid="remind-notice"><div class="notice-h">' + ntIc("remind") + '<b>내일 예약 ' + l.length + "건 확인 문자</b>" +
       (done ? '<span class="muted num">' + done + "/" + l.length + " 보냄</span>" : "") +
       '<button class="btn primary" data-act="open-rem" data-testid="open-rem">보내기</button></div></div>';
   }
@@ -479,12 +488,13 @@
     if (Date.now() < +(store("pushLater") || 0)) return "";
     var later = '<button class="btn" data-act="push-later">나중에</button>';
     if (S.pushState === "need-install") {
-      return '<div class="notice" data-testid="push-notice"><div class="notice-h"><b>아이폰은 홈 화면에 추가해야 알림이 와요</b>' + later + "</div>" +
-        '<div class="notice-line">아래 <b>공유</b> 버튼 → <b>홈 화면에 추가</b>를 누른 뒤, 홈 화면의 세탁기 크루 아이콘으로 열어 주세요.</div></div>';
+      return '<div class="notice" data-testid="push-notice"><div class="notice-h">' + ntIc("push") + '<b>아이폰은 홈 화면에 추가해야 알림이 와요</b></div>' +
+        '<div class="notice-line">아래 <b>공유</b> 버튼 → <b>홈 화면에 추가</b>를 누른 뒤, 홈 화면의 세탁기 크루 아이콘으로 열어 주세요.</div>' +
+        '<div class="notice-acts">' + later + "</div></div>";
     }
-    return '<div class="notice" data-testid="push-notice"><div class="notice-h"><b>알림을 켜 주세요</b>' + later +
-      '<button class="btn primary" data-act="push-on" data-testid="push-on">알림 켜기</button></div>' +
-      '<div class="notice-line">새 예약·고객 요청·내일 확인 문자를 앱을 닫아 두어도 알려 드려요.</div></div>';
+    return '<div class="notice" data-testid="push-notice"><div class="notice-h">' + ntIc("push") + '<b>알림을 켜 주세요</b></div>' +
+      '<div class="notice-line">새 예약·고객 요청·내일 확인 문자를 앱을 닫아 두어도 알려 드려요.</div>' +
+      '<div class="notice-acts">' + later + '<button class="btn primary" data-act="push-on" data-testid="push-on">알림 켜기</button></div></div>';
   }
   async function pushOn() {
     try { await S.push.enable(); toast("알림을 켰어요."); }
@@ -628,15 +638,17 @@
   function renderBanner() {
     var b = $("#banner");
     if (!b) return;
-    var msg = "";
+    var msg = "", nt = "";
     var nl = S.conn === "ok" ? newList() : [];
     if (nl.length) {
-      msg += '<div class="notice" data-testid="new-notice"><div class="notice-h"><b>새 예약 ' + nl.length + "건</b>" +
+      nt += '<div class="notice" data-testid="new-notice"><div class="notice-h">' + ntIc("new") + '<b>새 예약 ' + nl.length + "건</b>" +
         '<button class="btn" data-act="seen-all" data-testid="seen-all">모두 확인</button></div>' +
         nl.slice(0, 5).map(function (r) { return '<button class="notice-row" data-open="' + esc(r.id) + '">' + esc(noteLine(r)) + "</button>"; }).join("") +
         (nl.length > 5 ? '<div class="muted" style="font-size:13px">외 ' + (nl.length - 5) + "건</div>" : "") + "</div>";
     }
-    if (S.conn === "ok" && S.tab === "list") msg += reqNoticeHtml() + remindNoticeHtml() + pushNoticeHtml();
+    if (S.conn === "ok" && S.tab === "list") nt += reqNoticeHtml() + remindNoticeHtml() + pushNoticeHtml();
+    // 알림 여러 개는 카드 하나에 줄로 묶어 보여 줌
+    if (nt) msg += '<div class="notice-list">' + nt + "</div>";
     if (S.conn === "nodb") msg += '<div class="banner">공유 장부에 연결되지 않았어요. 인터넷 연결을 확인하고 화면을 새로고침해 주세요.</div>';
     else if (S.readOnly) msg += '<div class="banner">보기 전용이에요. 예약을 넣거나 고치려면 장부 주인에게 \'편집자\'로 초대해 달라고 요청하세요.</div>';
     b.innerHTML = msg;
@@ -801,31 +813,39 @@
     return acts;
   }
 
+  // PC 표: 옆으로 밀지 않아도 한 화면에 들어오게 전화는 고객 아래, 작업은 기기 아래, 결제는 금액 아래에 둠
+  function itemsCell(r) {
+    var items = C.cleanItems(r.items);
+    if (!items.length) return "";
+    return items.map(function (it) {
+      return '<div class="it"><b>' + esc(it.type) + '</b><span class="sub">' + it.qty + "대 · " + esc(it.work) + (it.model ? " · " + esc(it.model) : "") + "</span></div>";
+    }).join("");
+  }
   function tableHtml(rows, conflicts) {
     var today = C.todayStr();
-    var out = '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>시간</th><th>고객</th><th>전화번호</th><th>주소</th><th>기기 · 모델</th><th>작업</th><th class="r">금액</th><th>결제</th><th>상태</th><th>참여 직원</th><th></th></tr></thead><tbody>';
+    var out = '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>시간</th><th>고객</th><th>주소</th><th>기기 · 작업</th><th class="r">금액 · 결제</th><th>상태</th><th>참여 직원</th><th></th></tr></thead><tbody>';
     var lastDate = null;
     rows.forEach(function (r) {
       if (r.date !== lastDate) {
         lastDate = r.date;
         var s = C.summarize(rows.filter(function (x) { return x.date === r.date; }));
-        out += '<tr class="dayrow"><td colspan="11">' + C.dayLabel(r.date) + (r.date === today ? " · 오늘" : "") + ' <span class="muted num">' + s.count + "건 · " + C.formatWon(s.totalRevenue) + "원</span></td></tr>";
+        out += '<tr class="dayrow"><td colspan="8">' + C.dayLabel(r.date) + (r.date === today ? " · 오늘" : "") + ' <span class="muted num">' + s.count + "건 · " + C.formatWon(s.totalRevenue) + "원</span></td></tr>";
       }
       var c = r.customer || {}, p = r.payment || {};
       var cf = conflicts[r.id];
       var acts = rsvpHtml(r) + quickActs(r, today);
       out += '<tr class="row st-' + esc(r.status) + '" data-id="' + esc(r.id) + '" data-testid="card">' +
         '<td class="nowrap num"><b>' + esc(r.time) + "</b>~" + esc(C.endTime(r.time, r.durationMin)) + '<span class="sub">' + C.durationLabel(r.durationMin) + "</span></td>" +
-        "<td><b>" + esc(c.name || "") + "</b>" + (cf ? '<span class="sub" style="color:var(--bad)" data-testid="conflict">' + esc(conflictText(r, cf)) + "</span>" : "") + "</td>" +
-        '<td class="nowrap num">' + (c.phone ? '<button class="lk" data-act="phone"><span>' + esc(C.formatPhone(c.phone)) + "</span></button>" : "") + "</td>" +
-        '<td><div class="c-links">' + addrLinks(r) + photoBtn(r) + "</div></td>" +
-        "<td>" + esc(C.itemsSummary(r.items)) + '<span class="sub">' + esc(C.modelsSummary(r.items)) + "</span></td>" +
-        "<td>" + esc(C.worksSummary(r.items)) + "</td>" +
-        '<td class="r nowrap num"><b data-testid="card-amt">' + C.formatWon(r.total) + "원</b></td>" +
-        '<td class="nowrap">' + esc(p.method || "미정") + '<span class="sub">' + (r.status === "canceled" ? "" : C.isPaid(r) ? "입금완료" : r.status === "done" ? '<span style="color:var(--warn)">미수금</span>' : "입금 전") + "</span></td>" +
+        '<td class="cust"><b>' + esc(c.name || "") + "</b>" +
+          (c.phone ? '<button class="lk" data-act="phone"><span class="num">' + esc(C.formatPhone(c.phone)) + "</span></button>" : "") +
+          (cf ? '<span class="sub" style="color:var(--bad)" data-testid="conflict">' + esc(conflictText(r, cf)) + "</span>" : "") + "</td>" +
+        '<td><div class="c-links addr-box">' + addrLinks(r) + photoBtn(r) + "</div></td>" +
+        "<td>" + itemsCell(r) + "</td>" +
+        '<td class="r nowrap num"><b data-testid="card-amt">' + C.formatWon(r.total) + '원</b><span class="sub">' + esc(p.method || "미정") + " · " +
+          (r.status === "canceled" ? "" : C.isPaid(r) ? "입금완료" : r.status === "done" ? '<span style="color:var(--warn)">미수금</span>' : "입금 전") + "</span></td>" +
         '<td><span class="pill ' + esc(r.status) + '">' + (C.STATUS[r.status] || "") + "</span></td>" +
         '<td><div class="chips">' + crewHtml(r) + "</div></td>" +
-        '<td class="nowrap">' + acts + "</td></tr>";
+        '<td class="acts">' + acts + "</td></tr>";
     });
     return out + "</tbody></table></div>";
   }
