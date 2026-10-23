@@ -19,8 +19,12 @@
     if (/NAVER\(inapp|Instagram|FBAN|FBAV|FB_IAB|Line\/|DaumApps|everytimeApp|; wv\)/i.test(u)) return "other";
     return "";
   }
+  // 플레이스토어 앱(TWA)으로 열면 첫 화면의 referrer가 android-app:// — 이 탭에선 계속 앱으로 봄
+  var TWA_KEY = "wc.twa";
+  try { if (/^android-app:\/\//.test(document.referrer || "")) sessionStorage.setItem(TWA_KEY, "1"); } catch (e) { /* 무시 */ }
+  function inTwa() { try { return sessionStorage.getItem(TWA_KEY) === "1"; } catch (e) { return false; } }
   function standalone() {
-    return (window.matchMedia && matchMedia("(display-mode: standalone)").matches) || navigator.standalone === true;
+    return inTwa() || (window.matchMedia && matchMedia("(display-mode: standalone)").matches) || navigator.standalone === true;
   }
   function browser() {
     var u = ua();
@@ -80,7 +84,7 @@
   }
 
   window.WCInstall = {
-    inApp: inApp, standalone: standalone, browser: browser, isIos: isIos,
+    inApp: function () { return inTwa() ? "" : inApp(); }, inTwa: inTwa, standalone: standalone, browser: browser, isIos: isIos,
     externalHref: externalHref, outName: outName,
     canPrompt: function () { return !!deferred; },
     prompt: prompt, stepsHtml: stepsHtml, inAppBoxHtml: inAppBoxHtml,

@@ -9,3 +9,7 @@
 
 /manifest.webmanifest
   Content-Type: application/manifest+json
+
+/.well-known/assetlinks.json
+  Content-Type: application/json
+  Access-Control-Allow-Origin: *

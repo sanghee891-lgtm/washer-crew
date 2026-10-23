@@ -582,6 +582,24 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     ok(m.icons.every((s) => s === 200) && m.touch === 200, "아이콘");
     ok(m.sw, "서비스 워커 등록");
   });
+  await step("플레이스토어 앱 준비: id·start_url·화면 사진·오프라인 화면·앱 확인 파일", async () => {
+    const r = await p.evaluate(async () => {
+      const link = document.querySelector("link[rel=manifest]").href;
+      const j = await (await fetch(link)).json();
+      const shots = await Promise.all((j.screenshots || []).map(async (x) => (await fetch(new URL(x.src, link))).status));
+      const sw = await (await fetch("sw.js")).text();
+      const off = await fetch("offline.html");
+      const al = await (await fetch("/.well-known/assetlinks.json")).text();
+      return { id: j.id, start: j.start_url, scope: j.scope, shots, shotN: (j.screenshots || []).length, maskable: j.icons.some((i) => i.purpose === "maskable"),
+        swFetch: /addEventListener\("fetch"/.test(sw), offline: off.status, offlineText: await off.text(), al };
+    });
+    eq(r.id, "/"); eq(r.start, "/"); eq(r.scope, "/");
+    ok(r.shotN >= 2 && r.shots.every((x) => x === 200), "화면 사진 " + r.shots.join());
+    ok(r.maskable, "maskable 아이콘");
+    ok(r.swFetch, "서비스 워커 fetch 처리");
+    eq(r.offline, 200); ok(r.offlineText.includes("인터넷에 연결되지 않았어요"));
+    ok(Array.isArray(JSON.parse(r.al)), "assetlinks.json 은 JSON 배열");
+  });
   await step("CSV 받기: 파일 내려받기", async () => {
     await p.click("[data-testid=tab-stats]");
     const [dl] = await Promise.all([p.waitForEvent("download"), p.click("[data-testid=csv]")]);
@@ -701,6 +719,25 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
       await ip.click("[data-testid=install-btn]");
       await ip.waitForSelector("#modal .inst-steps");
       ok((await ip.innerText("#modal .inst-steps")).includes("홈 화면에 추가"));
+      await c.close();
+    });
+    await step("플레이스토어 앱(TWA)으로 열면 카톡·설치 안내 없음", async () => {
+      // 실제 앱은 처음 열 때 document.referrer 가 android-app://패키지 — 첫 화면에서만 그렇게 흉내
+      const twaRef = () => {
+        try {
+          if (location.pathname === "/" && !sessionStorage.getItem("test.twaDone")) {
+            sessionStorage.setItem("test.twaDone", "1");
+            Object.defineProperty(Document.prototype, "referrer", { configurable: true, get: () => "android-app://com.washercrew.app/" });
+          }
+        } catch (e) { /* 무시 */ }
+      };
+      const { c, ip } = await open(UA.kakao, "u-shin", twaRef);
+      await ip.waitForSelector("[data-testid=card], [data-testid=empty]");
+      eq(await ip.locator("[data-testid=inapp-box]").count(), 0, "카톡 안내 없음");
+      eq(await ip.locator("[data-testid=install-btn]").count(), 0, "설치 안내 없음");
+      await ip.reload();
+      await ip.waitForSelector("[data-testid=card], [data-testid=empty]");
+      eq(await ip.locator("[data-testid=install-btn]").count(), 0, "새로고침해도 앱으로 인식");
       await c.close();
     });
     await step("홈 화면 앱으로 열면 설치 안내 없음", async () => {
