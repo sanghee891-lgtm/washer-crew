@@ -83,9 +83,17 @@ function mockSupabase(cfg) {
       var gone = Object.keys(d.docs).filter(function (p) {
         if (!match({ path: p, coll: colOf(p), data: d.docs[p] }) || !canWrite(d, p)) return false;
         var a = acct(d);
-        return colOf(p) !== "reservations" || a.owner || d.docs[p].createdBy === a.staffId;
+        return (colOf(p) !== "reservations" && colOf(p) !== "trash") || a.owner || d.docs[p].createdBy === a.staffId;
       });
-      gone.forEach(function (p) { delete d.docs[p]; emit("docs", p); });
+      gone.forEach(function (p) {
+        // 서버 트리거처럼: 지운 예약은 trash/<id> 로 옮김
+        if (colOf(p) === "reservations") {
+          var tp = "trash/" + p.split("/")[1];
+          d.docs[tp] = Object.assign({}, d.docs[p], { deletedAt: new Date().toISOString(), deletedBy: acct(d).staffId || "" });
+          emit("docs", tp);
+        }
+        delete d.docs[p]; emit("docs", p);
+      });
       save(d);
       return { data: gone.map(function (p) { return { path: p }; }), error: null };
     }
@@ -118,6 +126,14 @@ function mockSupabase(cfg) {
     await delay();
     window.__fakesb.calls.push("rpc:" + name);
     var d = load(), a = acct(d);
+    if (name === "keepalive") return { data: true, error: null };
+    // 가게 코드: 코드를 넣으면 로그인 전에도 이름 목록, 코드 없이 부르는 예전 함수는 로그인한 사람만
+    var code = d.shopCode || "123456";
+    if (name === "login_staff_roles" && args && "p_code" in args) {
+      d.codeFails = (d.codeFails || []).filter(function (t) { return t > Date.now() - 600000; });
+      if (d.codeFails.length >= 10) { save(d); return { data: null, error: { code: "22023", message: "too_many" } }; }
+      if (args.p_code !== code) { d.codeFails.push(Date.now()); save(d); return { data: [], error: null }; } // 서버처럼 빈 목록
+    } else if ((name === "login_staff" || name === "login_staff_roles") && !a) return { data: null, error: { code: "42501", message: "permission denied for function " + name } };
     if (name === "login_staff" || name === "login_staff_roles") {
       var list = ((d.docs["config/staff"] || {}).list || []).map(function (p) {
         var a2 = d.accounts.filter(function (x) { return x.staffId === p.id; })[0];
@@ -136,6 +152,25 @@ function mockSupabase(cfg) {
     if (name === "photo_usage") {
       var ids = Object.keys(d.files);
       return { data: { files: ids.length, bytes: ids.reduce(function (s, k) { return s + d.files[k].size; }, 0) }, error: null };
+    }
+    if (name === "shop_code") return { data: a.owner ? code : null, error: null };
+    if (name === "set_shop_code") {
+      if (!a.owner) return { data: null, error: { code: "42501", message: "owner_only" } };
+      if (!/^[0-9]{6}$/.test(args.p_code)) return { data: null, error: { code: "22023", message: "bad_code" } };
+      d.shopCode = args.p_code; save(d); return { data: null, error: null };
+    }
+    if (name === "push_status") {
+      if (!a.owner) return { data: null, error: null };
+      return { data: d.accounts.map(function (x) {
+        var n = Object.keys(d.subs || {}).filter(function (k) { return d.subs[k] === x.uid; }).length;
+        return { staff_id: x.staffId, devices: n, last: null };
+      }), error: null };
+    }
+    if (name === "export_backup") {
+      if (!a.owner) return { data: null, error: { code: "42501", message: "owner_only" } };
+      return { data: { app: "washer-crew", taken_at: new Date().toISOString(),
+        docs: Object.keys(d.docs).filter(function (p) { return p.indexOf("data/users/") !== 0; }).map(function (p) { return { path: p, data: d.docs[p] }; }),
+        bookings: d.bookings || [], auto_backups: [] }, error: null };
     }
     if (name === "save_push_subscription") { d.subs[args.p_endpoint] = a.uid; save(d); return { data: null, error: null }; }
     if (name === "delete_push_subscription") { delete d.subs[args.p_endpoint]; save(d); return { data: null, error: null }; }

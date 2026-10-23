@@ -106,7 +106,47 @@
     }
   }
 
-  var LOGIN = { names: null, pick: null, pin: "", busy: false, msg: "", lock: false };
+  var LOGIN = { names: null, pick: null, pin: "", busy: false, msg: "", lock: false, needCode: false, code: "" };
+  // 가게 코드: 맞게 넣은 기기에만 직원 이름 목록을 보여 줌(이 기기에 기억)
+  var CODE_KEY = "wc.shopCode";
+  function savedCode() { try { return localStorage.getItem(CODE_KEY) || ""; } catch (e) { return ""; } }
+  function saveCode(c) { try { if (c) localStorage.setItem(CODE_KEY, c); else localStorage.removeItem(CODE_KEY); } catch (e) { /* 무시 */ } }
+  async function loadNames() {
+    var sess = await sb.auth.getSession();
+    var r;
+    if (sess && sess.data && sess.data.session) {
+      r = await sb.rpc("login_staff_roles"); // 잠금 화면: 이미 로그인한 기기는 코드 없이
+    } else {
+      var code = savedCode();
+      if (!code) { LOGIN.needCode = true; LOGIN.names = null; return; }
+      r = await sb.rpc("login_staff_roles", { p_code: code });
+      var m = r.error && (r.error.message || "");
+      if ((r.error && /bad_code/.test(m)) || (!r.error && !(r.data || []).length)) { // 틀린 코드는 빈 목록
+        saveCode(""); LOGIN.needCode = true; LOGIN.names = null;
+        LOGIN.msg = "가게 코드가 바뀌었어요. 사장님께 새 코드를 받아 넣어 주세요."; return;
+      }
+      if (r.error && /too_many/.test(m)) { LOGIN.needCode = true; LOGIN.names = null; LOGIN.msg = "여러 번 틀렸어요. 10분 뒤에 다시 해 주세요."; return; }
+      if (r.error && (r.error.code === "PGRST202" || /function|schema cache/i.test(m))) r = await sb.rpc("login_staff_roles"); // 예전 서버
+    }
+    if (r.error) r = await sb.rpc("login_staff"); // 예전 서버 함수(역할 없음)
+    if (r.error) { LOGIN.msg = "인터넷 연결을 확인해 주세요."; LOGIN.names = []; }
+    else { LOGIN.names = r.data || []; LOGIN.needCode = false; }
+  }
+  async function typeCode(d) {
+    if (LOGIN.busy || LOGIN.code.length >= 6) return;
+    LOGIN.code += d; LOGIN.msg = "";
+    renderLogin();
+    if (LOGIN.code.length < 6) return;
+    LOGIN.busy = true; renderLogin();
+    var r = await sb.rpc("login_staff_roles", { p_code: LOGIN.code });
+    LOGIN.busy = false;
+    if (!r.error && !(r.data || []).length) r = { error: { message: "bad_code" } }; // 틀린 코드는 빈 목록
+    if (!r.error) { saveCode(LOGIN.code); LOGIN.code = ""; LOGIN.needCode = false; LOGIN.names = r.data || []; renderLogin(); return; }
+    var m = r.error.message || "";
+    LOGIN.code = "";
+    LOGIN.msg = /too_many/.test(m) ? "여러 번 틀렸어요. 10분 뒤에 다시 해 주세요." : /bad_code/.test(m) ? "가게 코드가 맞지 않아요. 다시 눌러 주세요." : "인터넷 연결을 확인해 주세요.";
+    renderLogin();
+  }
   var DEFAULT_PIN = "000000";
   async function showLogin() {
     document.documentElement.classList.add("need-login");
@@ -121,13 +161,7 @@
       document.addEventListener("keydown", onLoginKey);
     }
     renderLogin();
-    if (!LOGIN.names) {
-      var r = await sb.rpc("login_staff_roles");
-      if (r.error) r = await sb.rpc("login_staff"); // 예전 서버 함수(역할 없음)
-      if (r.error) { LOGIN.msg = "인터넷 연결을 확인해 주세요."; LOGIN.names = []; }
-      else LOGIN.names = r.data || [];
-      renderLogin();
-    }
+    if (!LOGIN.names) { await loadNames(); renderLogin(); }
   }
 
   // 이름 아래 표시: 관리 권한 계정(신창민)은 "개발자", 나머지는 "사장님"(표시만, 권한은 그대로)
@@ -145,7 +179,14 @@
     if (!box) return;
     var html = '<div class="login-in"><div class="login-brand"><span class="login-mark"><img src="assets/mark.webp" alt=""></span>' +
       '<div class="login-title">세탁기 <b>크루</b></div><div class="login-sub">예약 · 매출 관리</div></div>';
-    if (!LOGIN.pick) {
+    if (LOGIN.needCode && !LOGIN.pick) {
+      html += '<div class="login-card" data-testid="code-card"><div class="login-head"><h1>가게 코드를 눌러 주세요</h1><p>사장님께 받은 숫자 6자리예요. 이 휴대폰에 기억돼서 한 번만 넣으면 돼요.</p></div>' +
+        '<div class="pin-dots" aria-label="입력한 자리 수 ' + LOGIN.code.length + '">' +
+        [0, 1, 2, 3, 4, 5].map(function (i) { return '<i class="' + (i < LOGIN.code.length ? "on" : "") + '"></i>'; }).join("") + "</div>" +
+        '<p class="login-err" data-testid="code-err">' + esc(LOGIN.busy ? "" : LOGIN.msg) + (LOGIN.busy ? '<span class="muted">확인 중…</span>' : "") + "</p></div>" +
+        '<div class="pin-pad">' + [1, 2, 3, 4, 5, 6, 7, 8, 9].map(function (n) { return '<button class="btn" data-ckey="' + n + '">' + n + "</button>"; }).join("") +
+        '<span></span><button class="btn" data-ckey="0">0</button><button class="btn" data-cdel aria-label="한 자리 지우기">지우기</button></div>';
+    } else if (!LOGIN.pick) {
       html += '<div class="login-head"><h1>접속할 사용자를 선택해주세요</h1><p>선택한 사용자로 업무를 시작합니다.</p></div>';
       if (!LOGIN.names) html += '<p class="muted login-wait">불러오는 중…</p>';
       else if (!LOGIN.names.length) html += '<p class="login-err">' + esc(LOGIN.msg || "등록된 직원이 없어요. 사장님께 문의해 주세요.") + '</p><button class="btn wide" data-retry>다시 시도</button>';
@@ -177,7 +218,13 @@
   }
 
   function onLoginKey(e) {
-    if (!LOGIN.pick || !$("#login")) return;
+    if (!$("#login")) return;
+    if (LOGIN.needCode && !LOGIN.pick) {
+      if (/^[0-9]$/.test(e.key)) typeCode(e.key);
+      else if (e.key === "Backspace") { LOGIN.code = LOGIN.code.slice(0, -1); renderLogin(); }
+      return;
+    }
+    if (!LOGIN.pick) return;
     if (/^[0-9]$/.test(e.key)) typeKey(e.key);
     else if (e.key === "Backspace") { LOGIN.pin = LOGIN.pin.slice(0, -1); renderLogin(); }
   }
@@ -186,6 +233,9 @@
     var n = t.closest("[data-name]");
     if (n) { LOGIN.pick = n.getAttribute("data-name"); LOGIN.pin = ""; LOGIN.msg = ""; renderLogin(); return; }
     if (t.closest("[data-retry]")) { LOGIN.names = null; LOGIN.msg = ""; showLogin(); return; }
+    var ck = t.closest("[data-ckey]");
+    if (ck) { typeCode(ck.getAttribute("data-ckey")); return; }
+    if (t.closest("[data-cdel]")) { LOGIN.code = LOGIN.code.slice(0, -1); renderLogin(); return; }
     if (t.closest("[data-install]") && window.WCInstall) {
       window.WCInstall.prompt().then(function (res) { if (res === "manual") LOGIN.steps = true; renderLogin(); });
       return;
@@ -443,7 +493,7 @@
   }
   var downloads = {
     save: async function (req) {
-      var blob = new Blob([req.data], { type: /\.csv$/i.test(req.filename) ? "text/csv;charset=utf-8" : "application/octet-stream" });
+      var blob = new Blob([req.data], { type: /\.csv$/i.test(req.filename) ? "text/csv;charset=utf-8" : /\.json$/i.test(req.filename) ? "application/json" : "application/octet-stream" });
       var url = URL.createObjectURL(blob);
       var a = document.createElement("a");
       a.href = url; a.download = asciiName(req.filename); a.style.display = "none";
@@ -604,7 +654,16 @@
   // 다른 사용자로: 로그아웃하고 사용자 고르는 화면으로(이 기기 알림 구독도 풀어 다른 사람에게 가지 않게)
   async function switchUser() { return user.signOut(); }
 
-  var caps = { db: db, user: user, downloads: downloads, assets: assets, push: push, bookings: bookings };
+  function rpcOrThrow(name, args) {
+    return sb.rpc(name, args).then(function (r) { if (r.error) throw mapErr(r.error); return r.data; });
+  }
+  var admin = {
+    shopCode: function () { return rpcOrThrow("shop_code"); },
+    setShopCode: function (c) { return rpcOrThrow("set_shop_code", { p_code: c }).then(function () { saveCode(c); }); },
+    pushStatus: function () { return rpcOrThrow("push_status"); },
+    exportBackup: function () { return rpcOrThrow("export_backup"); }
+  };
+  var caps = { db: db, user: user, downloads: downloads, assets: assets, push: push, bookings: bookings, admin: admin };
   window.claude = {
     use: function (name) { return ready.then(function () { return caps[name] || null; }); }
   };

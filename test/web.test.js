@@ -99,7 +99,8 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     await page.evaluate((o) => {
       if (o.seed) localStorage.setItem("fakesb", JSON.stringify(Object.assign({ accounts: o.accounts }, o.seed)));
       if (o.session) sessionStorage.setItem("fakesb.session", o.session); else sessionStorage.removeItem("fakesb.session");
-    }, { seed: opt.seed, session: opt.session, accounts: ACCOUNTS });
+      if (o.code) localStorage.setItem("wc.shopCode", o.code); else localStorage.removeItem("wc.shopCode"); // 가게 코드를 넣은 기기
+    }, { seed: opt.seed, session: opt.session, accounts: ACCOUNTS, code: opt.noCode ? "" : "123456" });
     await page.goto(BASE + (opt.path || ""));
     return page;
   }
@@ -472,6 +473,11 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     eq(await bp.inputValue("[data-testid=b-time]"), "10:00", "빠른 버튼 → 시간 칸");
     await bp.click("[data-testid=b-anytime]");
     eq(await bp.inputValue("[data-testid=b-time]"), "", "상관없음 → 비움");
+    eq(await bp.getAttribute("[data-testid=b-time]", "min"), "08:00"); eq(await bp.getAttribute("[data-testid=b-time]", "max"), "20:00");
+    await bp.fill("[data-testid=b-time]", "21:00");
+    await bp.click("[data-testid=b-send]");
+    ok((await bp.innerText("#e-time")).includes("오전 8시부터 오후 8시"), "범위 밖 시간 안내");
+    eq(booked.length, 0, "보내지 않음");
     await bp.fill("[data-testid=b-time]", "14:30");
     eq(await bp.getAttribute("[data-testid=b-anytime]", "aria-pressed"), "false");
     await bp.fill("[data-testid=b-name]", "최고객");
@@ -606,6 +612,69 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     ok(t.sha256_cert_fingerprints.length >= 1 && t.sha256_cert_fingerprints.every((f) => /^([0-9A-F]{2}:){31}[0-9A-F]{2}$/.test(f)), "지문 형식");
     ok(t.sha256_cert_fingerprints.includes("04:79:62:50:4D:FE:AA:41:59:A3:55:55:4A:1A:B4:19:2D:58:38:4F:88:D6:8B:8D:AC:2B:69:B5:86:DA:CE:04"), "업로드 키 지문");
   });
+  // ---------------- 휴지통·백업·사장님 관리 ----------------
+  await step("예약 삭제 → 휴지통(사진은 남김), 토스트 [되돌리기]로 바로 복구", async () => {
+    await p.click("[data-testid=tab-list]");
+    const before = (await fakeDb(p)).docs["reservations/r_tmr"];
+    ok(before, "삭제 전 예약 있음");
+    await p.locator("[data-testid=card]", { hasText: "김민지" }).locator("[data-act=detail]").click();
+    await p.click("[data-testid=del]");
+    ok((await p.innerText("#formFoot")).includes("휴지통에 30일"), "삭제 확인 문구");
+    await p.click("[data-testid=del-yes]");
+    await p.waitForFunction(() => document.querySelector("#toast").textContent.includes("휴지통으로 옮겼어요"));
+    let d = await fakeDb(p);
+    ok(!d.docs["reservations/r_tmr"], "예약 목록에서 빠짐");
+    eq(d.docs["trash/r_tmr"].customer.name, "김민지"); eq(d.docs["trash/r_tmr"].deletedBy, "smvivcjg03");
+    const files = Object.keys(d.files).length;
+    await p.click("#toast button");
+    await p.waitForFunction(() => document.querySelector("#toast").textContent.includes("되살렸어요"));
+    d = await fakeDb(p);
+    ok(d.docs["reservations/r_tmr"] && !d.docs["trash/r_tmr"], "예약 복구, 휴지통 비움");
+    ok(!("deletedAt" in d.docs["reservations/r_tmr"]), "휴지통 표시 지움");
+    eq(d.docs["reservations/r_tmr"].createdBy, before.createdBy, "넣은 사람 그대로");
+    eq(Object.keys(d.files).length, files, "사진 그대로");
+    await p.locator("[data-testid=card]", { hasText: "김민지" }).waitFor();
+  });
+  await step("설정 → 휴지통에서 되살리기, 사장님은 영구 삭제", async () => {
+    await p.locator("[data-testid=card]", { hasText: "김민지" }).locator("[data-act=detail]").click();
+    await p.click("[data-testid=del]"); await p.click("[data-testid=del-yes]");
+    await p.waitForFunction(() => document.querySelector("#toast").textContent.includes("휴지통으로"));
+    await p.click("[data-testid=tab-settings]");
+    await p.locator("[data-testid=trash-row]", { hasText: "김민지" }).waitFor();
+    ok((await p.innerText("[data-testid=trash-row]")).includes("신창민님이 지움"));
+    await p.click("[data-testid=trash-restore]");
+    await p.waitForFunction(() => document.querySelector("#toast").textContent.includes("되살렸어요"));
+    await p.waitForFunction(() => document.querySelector("[data-testid=trash-panel]").textContent.includes("지운 예약이 없어요"));
+    ok((await fakeDb(p)).docs["reservations/r_tmr"], "되살림");
+    // 다른 예약을 만들어 지운 뒤 영구 삭제
+    await p.evaluate(async () => { const db = await window.claude.use("db"); await db.doc("reservations/r_gone").set({ date: "2026-11-02", time: "09:00", status: "scheduled", customer: { name: "지울고객" }, items: [], createdBy: "smvivcjg03" }); await db.doc("reservations/r_gone").delete(); });
+    await p.click("[data-testid=tab-list]"); await p.click("[data-testid=tab-settings]");
+    await p.locator("[data-testid=trash-row]", { hasText: "지울고객" }).waitFor();
+    await p.locator("[data-testid=trash-row]", { hasText: "지울고객" }).locator("[data-testid=trash-purge]").click();
+    await p.click("[data-testid=purge-yes]");
+    await p.waitForFunction(() => document.querySelector("#toast").textContent.includes("영구 삭제"));
+    const d = await fakeDb(p);
+    ok(!d.docs["trash/r_gone"] && !d.docs["reservations/r_gone"], "완전히 지움");
+  });
+  await step("사장님 설정: 직원별 알림 켜짐·가게 코드 바꾸기·전체 백업 받기", async () => {
+    await p.waitForSelector("[data-testid=push-status]");
+    const ps = await p.innerText("[data-testid=push-status]");
+    ok(ps.includes("김영우") && ps.includes("꺼짐"), ps);
+    await p.waitForFunction(() => document.querySelector("[data-testid=shop-code]").textContent === "123456");
+    await p.click("[data-testid=shop-code-set]");
+    await p.fill("[data-testid=pin-input]", "654321");
+    await p.click("[data-testid=pin-save]");
+    await p.waitForFunction(() => document.querySelector("#toast").textContent.includes("가게 코드를 654321"));
+    eq(await p.innerText("[data-testid=shop-code]"), "654321");
+    eq((await fakeDb(p)).shopCode, "654321");
+    eq(await p.evaluate(() => localStorage.getItem("wc.shopCode")), "654321", "사장님 기기는 새 코드 기억");
+    const [dl] = await Promise.all([p.waitForEvent("download"), p.click("[data-testid=backup-btn]")]);
+    ok(/^washer-crew-backup-\d{4}-\d{2}-\d{2}\.json$/.test(dl.suggestedFilename()), dl.suggestedFilename());
+    const b = JSON.parse(fs.readFileSync(await dl.path(), "utf8"));
+    eq(b.app, "washer-crew");
+    ok(b.docs.some((x) => x.path === "reservations/r_tmr") && b.docs.some((x) => x.path === "config/staff"), "예약·직원 명단 포함");
+    await p.evaluate(() => { const d = JSON.parse(localStorage.getItem("fakesb")); d.shopCode = "123456"; localStorage.setItem("fakesb", JSON.stringify(d)); localStorage.setItem("wc.shopCode", "123456"); });
+  });
   await step("CSV 받기: 파일 내려받기", async () => {
     await p.click("[data-testid=tab-stats]");
     const [dl] = await Promise.all([p.waitForEvent("download"), p.click("[data-testid=csv]")]);
@@ -618,6 +687,34 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     await p.click("[data-testid=logout]");
     await p.waitForSelector("[data-testid=login-신창민]");
     eq(await p.evaluate(() => sessionStorage.getItem("fakesb.session")), null);
+  });
+  await step("처음 쓰는 휴대폰: 가게 코드 6자리를 넣어야 직원 이름이 보이고, 한 번 넣으면 기억", async () => {
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const np = await webPage(c, { seed: { docs: { "config/staff": STAFF } }, label: "code", noCode: true });
+    await np.waitForSelector("[data-testid=code-card]");
+    eq(await np.locator(".login-row").count(), 0, "이름 목록 숨김");
+    ok(!(await np.content()).includes("김영우"), "화면 어디에도 직원 이름 없음");
+    for (const d of "111111") await np.click(`.pin-pad [data-ckey="${d}"]`);
+    await np.waitForFunction(() => document.querySelector("[data-testid=code-err]").textContent.includes("맞지 않아요"));
+    eq(await np.evaluate(() => localStorage.getItem("wc.shopCode")), null);
+    for (const d of "123456") await np.click(`.pin-pad [data-ckey="${d}"]`);
+    await np.waitForSelector("[data-testid=login-김영우]");
+    eq(await np.evaluate(() => localStorage.getItem("wc.shopCode")), "123456", "기억");
+    await np.reload();
+    await np.waitForSelector("[data-testid=login-김영우]");
+    ok(!(await np.$("[data-testid=code-card]")), "다시 열면 바로 이름 목록");
+    // 사장님이 코드를 바꾸면 예전 코드 기기는 다시 코드 화면
+    await np.evaluate(() => { const d = JSON.parse(localStorage.getItem("fakesb")); d.shopCode = "777777"; localStorage.setItem("fakesb", JSON.stringify(d)); });
+    await np.reload();
+    await np.waitForSelector("[data-testid=code-card]");
+    ok((await np.innerText("[data-testid=code-err]")).includes("가게 코드가 바뀌었어요"));
+    // 코드 없이 예전 함수로 이름을 받으려 해도 막힘
+    const r = await np.evaluate(async () => { const s = window.supabase.createClient("x", "y"); const a = await s.rpc("login_staff_roles"); const b = await s.rpc("login_staff"); return [!!a.error, !!b.error]; });
+    eq(r, [true, true], "코드 없는 요청은 거절");
+    // 10번 틀리면 잠시 막힘
+    for (let i = 0; i < 10; i++) for (const d of "000001") await np.click(`.pin-pad [data-ckey="${d}"]`);
+    await np.waitForFunction(() => document.querySelector("[data-testid=code-err]").textContent.includes("10분 뒤"));
+    await c.close();
   });
   // ---------------- 휴대폰 폭에서 카드가 화면 안에 ----------------
   console.log("휴대폰 폭(360~412px) 한 화면");

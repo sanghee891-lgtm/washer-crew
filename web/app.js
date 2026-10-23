@@ -174,10 +174,10 @@
 
     var cl = window.claude;
     if (!cl || typeof cl.use !== "function") { S.conn = "nodb"; S.loading = false; render(); return; }
-    var got = await Promise.all([cl.use("db"), cl.use("user"), cl.use("downloads"), cl.use("assets"), cl.use("push"), cl.use("bookings")].map(function (p) {
+    var got = await Promise.all([cl.use("db"), cl.use("user"), cl.use("downloads"), cl.use("assets"), cl.use("push"), cl.use("bookings"), cl.use("admin")].map(function (p) {
       return Promise.resolve(p).catch(function () { return null; });
     }));
-    S.db = got[0]; S.user = got[1]; S.downloads = got[2]; S.assets = got[3]; S.push = got[4]; S.bookings = got[5];
+    S.db = got[0]; S.user = got[1]; S.downloads = got[2]; S.assets = got[3]; S.push = got[4]; S.bookings = got[5]; S.admin = got[6];
     if (!S.db) { S.conn = "nodb"; S.loading = false; render(); return; }
     S.conn = "ok";
     if (S.user) {
@@ -582,7 +582,7 @@
         if (!e.target.closest("[data-pinsave]")) return;
         var pin = $("#pinInp").value.replace(/\D/g, "");
         if (pin.length !== 6) { toast("숫자 6자리를 넣어 주세요."); return; }
-        try { await run(pin); closeModal(); toast("비밀번호를 저장했어요."); }
+        try { var okMsg = await run(pin); closeModal(); toast(okMsg || "비밀번호를 저장했어요."); }
         catch (err) {
           toast(err && err.code === "same_pin" ? "지금과 다른 번호를 넣어 주세요." : err && err.code === "default_pin" ? "000000 말고 다른 번호를 넣어 주세요." : "저장하지 못했어요. 다시 눌러 주세요.");
         }
@@ -1144,6 +1144,10 @@
 
     if (I) html += '<div class="section-title">홈 화면 앱</div><div class="panel" data-testid="install-panel">' + installStateHtml() + "</div>";
     if (S.push) html += '<div class="section-title">휴대폰 알림</div><div class="panel" data-testid="push-panel">' + pushStateHtml() + "</div>";
+    if (S.admin && S.isOwner) {
+      html += '<div class="section-title">직원별 알림 켜짐</div><div class="panel">' + pushStatusHtml() + "</div>";
+      html += '<div class="section-title">가게 코드</div><div class="panel">' + shopCodeHtml() + "</div>";
+    }
     if (S.bookings) {
       var bookUrl = new URL("book.html", location.href).href;
       html += '<div class="section-title">고객 예약 링크</div><div class="panel"><div class="sel-text" data-testid="book-url">' + esc(bookUrl) + "</div>" +
@@ -1168,6 +1172,12 @@
       '<button class="btn primary" data-act="staff-save" data-testid="staff-save" style="margin-left:auto"' + (canWrite() ? "" : " disabled") + ">명단 저장</button></div></div>";
     html += accountsHtml();
 
+    if (canWrite()) html += '<div class="section-title">휴지통</div><div class="panel trash" data-testid="trash-panel">' + trashHtml() + "</div>";
+    if (S.admin && S.isOwner && S.downloads) {
+      html += '<div class="section-title">백업</div><div class="panel" data-testid="backup-panel"><p style="margin:0 0 8px">매일 새벽 3시 30분에 서버가 장부 전체를 자동으로 백업해요(30일 보관).</p>' +
+        '<button class="btn primary" data-act="backup" data-testid="backup-btn">전체 백업 받기</button>' +
+        '<p class="muted" style="margin:8px 0 0;font-size:13px">휴대폰에 파일로 저장돼요. 한 달에 한 번쯤 받아서 구글 드라이브에 올려 두면 더 안전해요.</p></div>';
+    }
     if (S.assets && S.isOwner) {
       html += '<div class="section-title">사진 저장 공간</div><div class="panel" id="usage" data-testid="usage">' + (S.usageText || "확인 중…") + "</div>";
       if (!S.usageAt || Date.now() - S.usageAt > 60000) {
@@ -1358,6 +1368,12 @@
       if (a === "switch-user") return S.user.switchUser();
       if (a === "copy-book") return copyText(new URL("book.html", location.href).href, "예약 링크를 복사했어요.");
       if (a === "acct-pin") return acctPin(act.getAttribute("data-sid"));
+      if (a === "trash-restore") { var tr = trashItem(act.getAttribute("data-tid")); if (tr) restoreRes(tr.id, tr); return; }
+      if (a === "trash-purge") { var tp = trashItem(act.getAttribute("data-tid")); if (tp) confirmPurge(tp); return; }
+      if (a === "backup") return downloadBackup();
+      if (a === "push-stat-refresh") { S.pushStat = null; renderBody(); return; }
+      if (a === "shop-code-set") return setShopCode();
+      if (a === "shop-code-copy") return copyText(S.shopCode, "가게 코드를 복사했어요.");
       if (a === "acct-rm") return acctRemove(act.getAttribute("data-sid"));
       return;
     }
@@ -1682,7 +1698,7 @@
     var foot = $("#formFoot");
     if (!foot) return;
     if (F.confirmDel) {
-      foot.innerHTML = '<span style="align-self:center;font-weight:700;flex:1">이 예약을 지울까요? 되돌릴 수 없어요.</span>' +
+      foot.innerHTML = '<span style="align-self:center;font-weight:700;flex:1">이 예약을 지울까요? 휴지통에 30일 동안 남아요.</span>' +
         '<button class="btn" data-delno>아니요</button><button class="btn danger solid" data-delyes data-testid="del-yes">삭제</button>';
       return;
     }
@@ -2018,15 +2034,112 @@
     } finally { saving = false; if (F === form) renderFoot(); }
   }
 
+  // 지우면 서버가 휴지통(trash/<id>)으로 옮겨 30일 보관. 사진은 영구 삭제할 때 지움
   async function del() {
-    var photos = C.photoList(S.all[F.id] || F.orig || {});
+    var id = F.id, copy = JSON.parse(JSON.stringify(S.all[id] || F.orig || {}));
+    delete copy.id;
     try {
-      await S.db.doc("reservations/" + F.id).delete();
+      await S.db.doc("reservations/" + id).delete();
       closeForm();
-      toast("예약을 삭제했어요.");
-    } catch (e) { toast(writeError(e)); return; }
-    // 예약에 딸린 사진도 정리(다른 직원이 올린 사진은 권한상 남을 수 있음)
-    if (S.assets) for (var i = 0; i < photos.length; i++) { try { await S.assets.delete(photos[i].id); } catch (e) { /* 무시 */ } }
+      toast("휴지통으로 옮겼어요. 30일 안에 되살릴 수 있어요.", { label: "되돌리기", run: function () { restoreRes(id, copy); } });
+    } catch (e) { toast(writeError(e)); }
+  }
+  async function restoreRes(id, data) {
+    try {
+      if (!data) { var snap = await S.db.doc("trash/" + id).get(); data = snap.exists ? snap.data() : null; }
+      if (!data) { toast("휴지통에서 찾지 못했어요."); return; }
+      data = JSON.parse(JSON.stringify(data));
+      delete data.id; delete data.deletedAt; delete data.deletedBy;
+      await S.db.doc("reservations/" + id).set(data);
+      try { await S.db.doc("trash/" + id).delete(); } catch (e) { /* 휴지통이 없던 예전 서버 */ }
+      toast("예약을 되살렸어요 · " + C.dayLabel(data.date) + " " + (data.time || ""));
+      if (S.tab === "settings") renderBody();
+    } catch (e) { toast(writeError(e)); }
+  }
+  async function purgeTrash(t, quiet) {
+    var photos = C.photoList(t);
+    try {
+      if (S.assets) for (var i = 0; i < photos.length; i++) { try { await S.assets.delete(photos[i].id); } catch (e) { /* 무시 */ } }
+      await S.db.doc("trash/" + t.id).delete();
+      if (!quiet) toast("영구 삭제했어요.");
+    } catch (e) { if (!quiet) toast(writeError(e)); }
+  }
+  var TRASH_DAYS = 30;
+  // 휴지통은 작아서 실시간으로 지켜봄(다른 직원이 지운 것도 바로 보임)
+  function loadTrash() {
+    if (!S.db || S.trashSub) return;
+    S.trashSub = S.db.collection("trash").onSnapshot(function (snap) {
+      var old = Date.now() - TRASH_DAYS * 86400000, list = [];
+      snap.docs.forEach(function (d) {
+        var t = Object.assign({}, d.data(), { id: d.id });
+        if (Date.parse(t.deletedAt || 0) < old) { if (S.isOwner) purgeTrash(t, true); return; }
+        if (canEditRes(t)) list.push(t);
+      });
+      list.sort(function (a, b) { return (b.deletedAt || "") < (a.deletedAt || "") ? -1 : 1; });
+      S.trash = list;
+      if (S.tab === "settings") renderBody();
+    }, function () { /* 다음에 다시 */ });
+  }
+  function trashHtml() {
+    loadTrash();
+    if (!S.trash) return '<p class="muted" style="margin:0">확인 중…</p>';
+    if (!S.trash.length) return '<p class="muted" style="margin:0">지운 예약이 없어요. 예약을 지우면 여기에 30일 동안 남아요.</p>';
+    return S.trash.map(function (t) {
+      var left = Math.max(1, TRASH_DAYS - Math.floor((Date.now() - Date.parse(t.deletedAt)) / 86400000));
+      return '<div class="trash-row" data-testid="trash-row"><div><b>' + esc(C.dayLabel(t.date)) + " " + esc(t.time || "") + "</b> · " + esc((t.customer && t.customer.name) || "이름 없음") +
+        '<div class="muted" style="font-size:13px">' + esc(staffName(t.deletedBy) || "") + (t.deletedBy ? "님이 지움 · " : "") + left + "일 뒤 자동 삭제</div></div>" +
+        '<div class="chips"><button class="btn primary" data-act="trash-restore" data-tid="' + esc(t.id) + '" data-testid="trash-restore">되살리기</button>' +
+        (S.isOwner ? '<button class="btn danger" data-act="trash-purge" data-tid="' + esc(t.id) + '" data-testid="trash-purge">영구 삭제</button>' : "") + "</div></div>";
+    }).join("") + '<p class="muted" style="margin:8px 0 0;font-size:13px">' + (S.isOwner ? "사장님은 모든 지운 예약을 볼 수 있어요." : "내가 넣은 예약만 보여요.") + "</p>";
+  }
+  function confirmPurge(t) {
+    openModal("<h2>영구 삭제할까요?</h2><p>" + esc(C.dayLabel(t.date) + " " + (t.time || "") + " · " + ((t.customer && t.customer.name) || "이름 없음")) +
+      " 예약과 사진이 완전히 지워지고 되살릴 수 없어요.</p>" +
+      '<button class="btn danger solid wide" data-purgeyes data-testid="purge-yes">영구 삭제</button><button class="btn wide" data-purgeno>취소</button>',
+      function (e) {
+        if (e.target.closest("[data-purgeno]")) { closeModal(); return; }
+        if (e.target.closest("[data-purgeyes]")) { closeModal(); purgeTrash(t); }
+      });
+  }
+  function trashItem(id) { return (S.trash || []).filter(function (t) { return t.id === id; })[0]; }
+
+  // ---------------- 사장님 관리: 가게 코드·알림 현황·백업 ----------------
+  function shopCodeHtml() {
+    if (S.shopCode === undefined && !S.shopCodeBusy) {
+      S.shopCodeBusy = true;
+      S.admin.shopCode().then(function (c) { S.shopCode = c || ""; S.shopCodeBusy = false; if (S.tab === "settings") renderBody(); },
+        function () { S.shopCode = ""; S.shopCodeBusy = false; if (S.tab === "settings") renderBody(); });
+    }
+    return '<div class="shop-code" data-testid="shop-code">' + (S.shopCode ? esc(S.shopCode) : S.shopCode === undefined ? "확인 중…" : "아직 없음") + "</div>" +
+      '<div class="chips"><button class="btn" data-act="shop-code-copy"' + (S.shopCode ? "" : " disabled") + '>코드 복사</button><button class="btn" data-act="shop-code-set" data-testid="shop-code-set">코드 바꾸기</button></div>' +
+      '<p class="muted" style="margin:8px 0 0;font-size:13px">처음 로그인하는 휴대폰은 이 숫자를 넣어야 직원 이름이 보여요. 한 번 넣으면 그 휴대폰에 기억돼요. 그만둔 직원이 있으면 코드를 바꾸세요.</p>';
+  }
+  function setShopCode() {
+    pinDialog("새 가게 코드", async function (c) { await S.admin.setShopCode(c); S.shopCode = c; renderBody(); return "가게 코드를 " + c + "(으)로 바꿨어요."; }, "숫자 6자리를 넣어 주세요. 바꾸면 새로 로그인하는 휴대폰은 새 코드를 넣어야 해요.");
+  }
+  function pushStatusHtml() {
+    if (!S.pushStat && !S.pushStatBusy) {
+      S.pushStatBusy = true;
+      S.admin.pushStatus().then(function (l) { S.pushStat = l || []; S.pushStatBusy = false; if (S.tab === "settings") renderBody(); },
+        function () { S.pushStat = []; S.pushStatBusy = false; });
+    }
+    if (!S.pushStat) return '<p class="muted" style="margin:0">확인 중…</p>';
+    var by = {};
+    S.pushStat.forEach(function (x) { by[x.staff_id] = x; });
+    return '<div class="push-list" data-testid="push-status">' + S.staff.map(function (p) {
+      var x = by[p.id], n = x ? +x.devices || 0 : 0;
+      return '<div class="push-row"><span>' + esc(p.name) + '</span><span class="' + (n ? "ok" : "off") + '">' + (n ? "켜짐" + (n > 1 ? " (기기 " + n + "대)" : "") : "꺼짐") + "</span></div>";
+    }).join("") + '</div><p class="muted" style="margin:8px 0 0;font-size:13px">꺼진 직원은 설정 → 휴대폰 알림에서 <b>알림 켜기</b>를 눌러야 새 예약 알림을 받아요.</p>' +
+      '<div class="chips" style="margin-top:8px"><button class="btn" data-act="push-stat-refresh">다시 확인</button></div>';
+  }
+  async function downloadBackup() {
+    toast("백업 파일을 만드는 중…");
+    try {
+      var b = await S.admin.exportBackup();
+      var name = "washer-crew-backup-" + C.todayStr() + ".json";
+      await S.downloads.save({ filename: name, data: JSON.stringify(b, null, 1), mimeType: "application/json" });
+      toast("백업 파일을 받았어요 · 예약 등 " + (b.docs || []).length + "건");
+    } catch (e) { toast("백업을 받지 못했어요. 다시 눌러 주세요."); }
   }
 
   // ---------------- 작업 사진 ----------------

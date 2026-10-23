@@ -94,7 +94,8 @@ textarea.inp { height: 96px; padding: 10px 12px; resize: vertical; }
       <h2>언제가 좋으세요?</h2>
       <div><label class="req" for="date">희망 날짜</label><input class="inp" type="date" id="date" data-testid="b-date"><div class="err" id="e-date" hidden></div></div>
       <div><label for="time">희망 시간</label>
-        <input class="inp" type="time" id="time" step="600" data-testid="b-time">
+        <input class="inp" type="time" id="time" step="600" min="08:00" max="20:00" data-testid="b-time">
+        <div class="muted" style="margin-top:4px">오전 8시부터 오후 8시 사이로 골라 주세요.</div><div class="err" id="e-time" hidden></div>
         <div class="chips slot-chips" id="slots" role="group" aria-label="자주 고르는 시간"></div></div>
     </div>
 
@@ -175,12 +176,12 @@ textarea.inp { height: 96px; padding: 10px 12px; resize: vertical; }
   function showErr(k, msg) { var el = $("#e-" + k); if (!el) return; el.textContent = msg || ""; el.hidden = !msg; }
   var MSG = {
     name: "이름을 넣어 주세요.", phone: "연락처를 다시 확인해 주세요.", address: "주소를 넣어 주세요.",
-    date: "오늘부터 6개월 안의 날짜를 골라 주세요.", too_many: "방금 요청을 보냈어요. 1분 뒤에 다시 보내 주세요.",
+    date: "오늘부터 6개월 안의 날짜를 골라 주세요.", time: "오전 8시부터 오후 8시 사이로 골라 주세요.", too_many: "방금 요청을 보냈어요. 1분 뒤에 다시 보내 주세요.",
     busy: "요청이 많아요. 잠시 뒤 다시 보내 주세요."
   };
   $("#f").addEventListener("submit", async function (e) {
     e.preventDefault();
-    ["name", "phone", "address", "date", "items", "form"].forEach(function (k) { showErr(k, ""); });
+    ["name", "phone", "address", "date", "time", "items", "form"].forEach(function (k) { showErr(k, ""); });
     var body = {
       name: $("#name").value.trim(), phone: C.formatPhone($("#phone").value.trim()), address: $("#addr").value.trim(),
       moveTo: S.work === "이전설치" ? $("#addr2").value.trim() : "", date: $("#date").value,
@@ -191,6 +192,7 @@ textarea.inp { height: 96px; padding: 10px 12px; resize: vertical; }
     var bad = null;
     if (!body.items.length) { showErr("items", "기기를 하나 이상 골라 주세요."); bad = bad || "#types"; }
     if (!body.date || body.date < today) { showErr("date", MSG.date); bad = bad || "#date"; }
+    if (body.timeSlot && (body.timeSlot < "08:00" || body.timeSlot > "20:00")) { showErr("time", MSG.time); bad = bad || "#time"; }
     if (!body.name) { showErr("name", MSG.name); bad = bad || "#name"; }
     if (C.normalizePhone(body.phone).length < 9) { showErr("phone", MSG.phone); bad = bad || "#phone"; }
     if (!body.address) { showErr("address", MSG.address); bad = bad || "#addr"; }
@@ -206,7 +208,7 @@ textarea.inp { height: 96px; padding: 10px 12px; resize: vertical; }
       if (!r.ok) {
         var j = await r.json().catch(function () { return {}; });
         var code = j && j.message;
-        if (code === "name" || code === "phone" || code === "address" || code === "date") { showErr(code, MSG[code]); }
+        if (code === "name" || code === "phone" || code === "address" || code === "date" || code === "time") { showErr(code, MSG[code]); }
         else showErr("form", MSG[code] || "보내지 못했어요. 인터넷 연결을 확인하고 다시 눌러 주세요.");
         return;
       }

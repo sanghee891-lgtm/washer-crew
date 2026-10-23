@@ -330,6 +330,15 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 14px; }
 /* ---------- 설정 ---------- */
 .staff-edit { display: grid; gap: 8px; }
 .staff-edit .row { display: flex; gap: 8px; }
+.trash-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.trash-row:last-of-type { border-bottom: 0; }
+.trash-row .chips { flex-wrap: nowrap; }
+.shop-code { font-size: 32px; font-weight: 800; letter-spacing: 8px; color: var(--brand-1); margin: 0 0 8px; font-variant-numeric: tabular-nums; }
+.push-list { display: grid; gap: 4px; }
+.push-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.push-row:last-child { border-bottom: 0; }
+.push-row .ok { color: var(--good, #0a7a3d); font-weight: 700; }
+.push-row .off { color: var(--bad); font-weight: 700; }
 .inp { height: 44px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); padding: 0 12px; width: 100%; min-width: 0; }
 textarea.inp { height: auto; min-height: 72px; padding: 10px 12px; resize: vertical; }
 .help { font-size: 14px; color: var(--ink-2); line-height: 1.6; }
