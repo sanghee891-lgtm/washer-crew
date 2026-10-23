@@ -1,1 +1,12 @@
-[]
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.washercrew.app",
+      "sha256_cert_fingerprints": [
+        "04:79:62:50:4D:FE:AA:41:59:A3:55:55:4A:1A:B4:19:2D:58:38:4F:88:D6:8B:8D:AC:2B:69:B5:86:DA:CE:04"
+      ]
+    }
+  }
+]

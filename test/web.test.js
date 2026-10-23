@@ -598,7 +598,13 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     ok(r.maskable, "maskable 아이콘");
     ok(r.swFetch, "서비스 워커 fetch 처리");
     eq(r.offline, 200); ok(r.offlineText.includes("인터넷에 연결되지 않았어요"));
-    ok(Array.isArray(JSON.parse(r.al)), "assetlinks.json 은 JSON 배열");
+    const al = JSON.parse(r.al);
+    ok(Array.isArray(al) && al.length >= 1, "assetlinks.json 은 JSON 배열");
+    const t = al[0].target;
+    eq(al[0].relation[0], "delegate_permission/common.handle_all_urls");
+    eq(t.namespace, "android_app"); eq(t.package_name, "com.washercrew.app");
+    ok(t.sha256_cert_fingerprints.length >= 1 && t.sha256_cert_fingerprints.every((f) => /^([0-9A-F]{2}:){31}[0-9A-F]{2}$/.test(f)), "지문 형식");
+    ok(t.sha256_cert_fingerprints.includes("04:79:62:50:4D:FE:AA:41:59:A3:55:55:4A:1A:B4:19:2D:58:38:4F:88:D6:8B:8D:AC:2B:69:B5:86:DA:CE:04"), "업로드 키 지문");
   });
   await step("CSV 받기: 파일 내려받기", async () => {
     await p.click("[data-testid=tab-stats]");
