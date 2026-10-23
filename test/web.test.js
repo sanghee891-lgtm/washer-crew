@@ -468,7 +468,12 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     await bp.click("[data-type='LG 2단']");
     await bp.click("[data-q='1'][data-t='LG 2단']");
     await bp.fill("[data-testid=b-date]", TOMORROW);
-    await bp.click("[data-slot='오전 (9~12시)']");
+    await bp.click("[data-slot='10:00']");
+    eq(await bp.inputValue("[data-testid=b-time]"), "10:00", "빠른 버튼 → 시간 칸");
+    await bp.click("[data-testid=b-anytime]");
+    eq(await bp.inputValue("[data-testid=b-time]"), "", "상관없음 → 비움");
+    await bp.fill("[data-testid=b-time]", "14:30");
+    eq(await bp.getAttribute("[data-testid=b-anytime]", "aria-pressed"), "false");
     await bp.fill("[data-testid=b-name]", "최고객");
     await bp.fill("[data-testid=b-phone]", "01077778888");
     await bp.fill("[data-testid=b-addr]", "출발 주소");
@@ -477,7 +482,7 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     await bp.check("[data-testid=b-agree]");
     await bp.click("[data-testid=b-send]");
     await bp.waitForSelector("[data-testid=b-done]");
-    eq(booked[0], { name: "최고객", phone: "010-7777-8888", address: "출발 주소", moveTo: "도착 주소", date: TOMORROW, timeSlot: "오전",
+    eq(booked[0], { name: "최고객", phone: "010-7777-8888", address: "출발 주소", moveTo: "도착 주소", date: TOMORROW, timeSlot: "14:30",
       items: [{ type: "건조기", qty: 1, work: "이전설치" }, { type: "LG 2단", qty: 2, work: "이전설치" }], note: "3층", website: "" });
   });
   await step("같은 번호로 바로 다시 보내면 '1분 뒤' 안내", async () => {
@@ -635,6 +640,81 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
         await c.close();
       });
     }
+  }
+
+  // ---------------- 홈 화면 설치·카카오톡 안 브라우저 ----------------
+  console.log("홈 화면 설치·카카오톡 안 브라우저");
+  {
+    const UA = {
+      kakao: "Mozilla/5.0 (Linux; Android 14; SM-S918N Build/UP1A; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/124.0 Mobile Safari/537.36;KAKAOTALK 2410520",
+      chrome: "Mozilla/5.0 (Linux; Android 14; SM-S918N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36",
+      iphone: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
+    };
+    const iseed = { docs: { "config/staff": STAFF } };
+    const open = async (ua, session, extra) => {
+      const c = await browser.newContext({ viewport: { width: 384, height: 800 }, userAgent: ua, hasTouch: true });
+      if (extra) await c.addInitScript(extra);
+      const ip = await webPage(c, { seed: iseed, session, label: "inst" });
+      return { c, ip };
+    };
+    await step("카카오톡 안: 로그인 화면에 '크롬으로 열기', 장부·설정에도 안내, 알림 안내는 숨김", async () => {
+      let { c, ip } = await open(UA.kakao, null);
+      await ip.waitForSelector("[data-testid=inapp-box]");
+      ok((await ip.innerText("[data-testid=inapp-box]")).includes("카카오톡 안에서 열려 있어요"));
+      const href = await ip.getAttribute("[data-testid=open-external]", "href");
+      ok(href.startsWith("kakaotalk://web/openExternal?url=" + encodeURIComponent(BASE)), href);
+      await c.close();
+      ({ c, ip } = await open(UA.kakao, "u-shin"));
+      await ip.waitForSelector("#view [data-testid=inapp-box]");
+      eq(await ip.locator("[data-testid=push-notice]").count(), 0, "알림 켜기 안내 대신 크롬 안내");
+      await ip.click("[data-testid=tab-settings]");
+      await ip.waitForSelector("[data-testid=install-panel] [data-testid=open-external]");
+      await c.close();
+    });
+    await step("갤럭시 크롬: [홈 화면에 앱 설치] → 크롬 설치 창 → 설치됨", async () => {
+      const fake = () => {
+        window.__prompted = 0;
+        setTimeout(() => {
+          const e = new Event("beforeinstallprompt");
+          e.prompt = () => { window.__prompted++; };
+          e.userChoice = Promise.resolve({ outcome: "accepted" });
+          window.dispatchEvent(e);
+        }, 300);
+      };
+      const { c, ip } = await open(UA.chrome, "u-shin", fake);
+      await ip.waitForSelector("[data-testid=install-btn]");
+      await ip.waitForFunction(() => window.WCInstall.canPrompt());
+      await ip.click("[data-testid=install-btn]");
+      await ip.waitForFunction(() => window.__prompted === 1);
+      await ip.waitForFunction(() => document.querySelector("#toast").textContent.includes("설치했어요"));
+      await c.close();
+    });
+    await step("설치 창이 없을 때(로그인 화면): 기기에 맞는 방법 안내", async () => {
+      const { c, ip } = await open(UA.chrome, null);
+      await ip.click("[data-testid=login-install]");
+      await ip.waitForSelector(".inst-steps");
+      ok((await ip.innerText(".inst-steps")).includes("점 3개"));
+      await c.close();
+    });
+    await step("아이폰 사파리: 설치 버튼 → '공유 → 홈 화면에 추가' 안내", async () => {
+      const { c, ip } = await open(UA.iphone, "u-shin");
+      await ip.click("[data-testid=install-btn]");
+      await ip.waitForSelector("#modal .inst-steps");
+      ok((await ip.innerText("#modal .inst-steps")).includes("홈 화면에 추가"));
+      await c.close();
+    });
+    await step("홈 화면 앱으로 열면 설치 안내 없음", async () => {
+      const standaloneMq = () => {
+        const orig = window.matchMedia.bind(window);
+        window.matchMedia = (q) => (/display-mode: standalone/.test(q) ? { matches: true, media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} } : orig(q));
+      };
+      const { c, ip } = await open(UA.chrome, "u-shin", standaloneMq);
+      await ip.waitForSelector("[data-testid=card], [data-testid=empty]");
+      eq(await ip.locator("[data-testid=install-btn]").count(), 0);
+      await ip.click("[data-testid=tab-settings]");
+      ok((await ip.innerText("[data-testid=install-panel]")).includes("홈 화면 앱으로 열었어요"));
+      await c.close();
+    });
   }
 
   await step("가로 스크롤 없음·콘솔 오류 0건", async () => {

@@ -166,6 +166,13 @@
         '<div class="pin-pad">' + [1, 2, 3, 4, 5, 6, 7, 8, 9].map(function (n) { return '<button class="btn" data-key="' + n + '">' + n + "</button>"; }).join("") +
         '<span></span><button class="btn" data-key="0">0</button><button class="btn" data-del aria-label="한 자리 지우기">지우기</button></div>';
     }
+    // 홈 화면 앱으로 연 게 아니면: 카톡 안이면 크롬·사파리로 넘기는 안내, 아니면 설치 버튼
+    var I = window.WCInstall;
+    if (I && I.needed() && !LOGIN.pick) {
+      html += I.inApp() ? I.inAppBoxHtml()
+        : '<div class="inst-box"><button class="btn wide" data-install data-testid="login-install">홈 화면에 앱 설치</button>' +
+          (LOGIN.steps ? I.stepsHtml() : "") + "</div>";
+    }
     box.innerHTML = html + '<div class="login-foot">WASHER CREW WORKSPACE</div></div>';
   }
 
@@ -179,6 +186,10 @@
     var n = t.closest("[data-name]");
     if (n) { LOGIN.pick = n.getAttribute("data-name"); LOGIN.pin = ""; LOGIN.msg = ""; renderLogin(); return; }
     if (t.closest("[data-retry]")) { LOGIN.names = null; LOGIN.msg = ""; showLogin(); return; }
+    if (t.closest("[data-install]") && window.WCInstall) {
+      window.WCInstall.prompt().then(function (res) { if (res === "manual") LOGIN.steps = true; renderLogin(); });
+      return;
+    }
     if (t.closest("[data-back]")) {
       if (LOGIN.lock) { switchUser(); return; }
       LOGIN.pick = null; LOGIN.pin = ""; LOGIN.msg = ""; renderLogin(); return;

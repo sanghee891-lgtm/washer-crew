@@ -51,6 +51,8 @@ label, .lab { display: block; font-weight: 700; font-size: 15px; margin-bottom: 
 .inp { width: 100%; height: 48px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 0 12px; }
 textarea.inp { height: 96px; padding: 10px 12px; resize: vertical; }
 .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.slot-chips { margin-top: 8px; }
+.slot-chips .chip { min-height: 40px; padding: 0 12px; font-size: 15px; }
 .chip { min-height: 44px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); font-weight: 700; }
 /* 기기: 첫 줄 통돌이·삼성 2단·LG 2단·빌트인, 둘째 줄 건조기·세탁기 */
 .type-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
@@ -91,7 +93,9 @@ textarea.inp { height: 96px; padding: 10px 12px; resize: vertical; }
     <div class="card">
       <h2>언제가 좋으세요?</h2>
       <div><label class="req" for="date">희망 날짜</label><input class="inp" type="date" id="date" data-testid="b-date"><div class="err" id="e-date" hidden></div></div>
-      <div><span class="lab">시간대</span><div class="chips" id="slots" role="group" aria-label="시간대"></div></div>
+      <div><label for="time">희망 시간</label>
+        <input class="inp" type="time" id="time" step="600" data-testid="b-time">
+        <div class="chips slot-chips" id="slots" role="group" aria-label="자주 고르는 시간"></div></div>
     </div>
 
     <div class="card">
@@ -123,8 +127,13 @@ textarea.inp { height: 96px; padding: 10px 12px; resize: vertical; }
 (function () {
   "use strict";
   var C = window.Core, CFG = window.WC_CONFIG || {};
-  var S = { work: "세척", types: {}, slot: "상관없음" };
-  var SLOTS = ["오전 (9~12시)", "오후 (12~18시)", "상관없음"];
+  var S = { work: "세척", types: {} };
+  // 장부처럼 원하는 시간을 직접 고르고, 자주 고르는 시간은 버튼으로 바로
+  var QUICK = ["09:00", "10:00", "11:00", "13:00", "14:00", "15:00", "16:00", "17:00"];
+  function hourLabel(t) {
+    var h = +t.slice(0, 2), m = t.slice(3);
+    return (h < 12 ? "오전 " : "오후 ") + (h % 12 || 12) + "시" + (m !== "00" ? " " + +m + "분" : "");
+  }
   function $(s) { return document.querySelector(s); }
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
   function chips(el, list, cur, attr) {
@@ -136,7 +145,10 @@ textarea.inp { height: 96px; padding: 10px 12px; resize: vertical; }
   function render() {
     chips($("#works"), C.WORKS, S.work, "data-work");
     chips($("#types"), C.TYPES, function (t) { return !!S.types[t]; }, "data-type");
-    chips($("#slots"), SLOTS, S.slot, "data-slot");
+    var cur = $("#time").value;
+    $("#slots").innerHTML = QUICK.map(function (t) {
+      return '<button type="button" class="chip" data-slot="' + t + '" aria-pressed="' + (cur === t) + '">' + esc(hourLabel(t)) + "</button>";
+    }).join("") + '<button type="button" class="chip" data-slot="" aria-pressed="' + !cur + '" data-testid="b-anytime">상관없음</button>';
     $("#qtys").innerHTML = Object.keys(S.types).map(function (t) {
       return '<div class="qty-row"><span>' + esc(t) + '</span><span class="qty"><button type="button" data-q="-1" data-t="' + esc(t) + '" aria-label="' + esc(t) + ' 줄이기">−</button><span>' +
         S.types[t] + '대</span><button type="button" data-q="1" data-t="' + esc(t) + '" aria-label="' + esc(t) + ' 늘리기">+</button></span></div>';
@@ -150,7 +162,7 @@ textarea.inp { height: 96px; padding: 10px 12px; resize: vertical; }
     var w = t.closest("[data-work]"); if (w) { S.work = w.getAttribute("data-work"); render(); return; }
     var ty = t.closest("[data-type]");
     if (ty) { var k = ty.getAttribute("data-type"); if (S.types[k]) delete S.types[k]; else S.types[k] = 1; render(); return; }
-    var sl = t.closest("[data-slot]"); if (sl) { S.slot = sl.getAttribute("data-slot"); render(); return; }
+    var sl = t.closest("[data-slot]"); if (sl) { $("#time").value = sl.getAttribute("data-slot"); render(); return; }
     var q = t.closest("[data-q]");
     if (q) { var n = q.getAttribute("data-t"); S.types[n] = Math.max(1, Math.min(20, S.types[n] + +q.getAttribute("data-q"))); render(); }
   });
@@ -158,6 +170,7 @@ textarea.inp { height: 96px; padding: 10px 12px; resize: vertical; }
   $("#date").min = today;
   $("#date").max = C.addDays(today, 180);
   $("#phone").addEventListener("blur", function () { this.value = C.formatPhone(this.value); });
+  $("#time").addEventListener("input", render);
 
   function showErr(k, msg) { var el = $("#e-" + k); if (!el) return; el.textContent = msg || ""; el.hidden = !msg; }
   var MSG = {
@@ -171,7 +184,7 @@ textarea.inp { height: 96px; padding: 10px 12px; resize: vertical; }
     var body = {
       name: $("#name").value.trim(), phone: C.formatPhone($("#phone").value.trim()), address: $("#addr").value.trim(),
       moveTo: S.work === "이전설치" ? $("#addr2").value.trim() : "", date: $("#date").value,
-      timeSlot: S.slot === "상관없음" ? "" : S.slot.split(" ")[0],
+      timeSlot: /^\d{2}:\d{2}$/.test($("#time").value) ? $("#time").value : "",
       items: Object.keys(S.types).map(function (t) { return { type: t, qty: S.types[t], work: S.work }; }),
       note: $("#note").value.trim(), website: $("#website").value
     };

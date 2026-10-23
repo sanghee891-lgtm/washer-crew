@@ -460,6 +460,14 @@ a.btn { color: var(--ink); text-decoration: none; display: inline-flex; align-it
 .login-title { font-size: 30px; font-weight: 800; letter-spacing: -.01em; color: var(--brand-1); }
 .login-title b { color: var(--brand-2); font-weight: 800; }
 .login-sub { font-size: 15px; color: var(--ink-3); }
+/* 홈 화면 설치·앱 안 브라우저 안내 */
+.inst-box { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; display: grid; gap: 8px; text-align: left; }
+.inst-box.warn { border: 2px solid var(--warn); background: var(--warn-soft); }
+.inst-box.warn > b { color: var(--warn); font-size: 17px; }
+.inst-box p { margin: 0; font-size: 15px; color: var(--ink); line-height: 1.55; }
+.inst-box .btn.wide { min-height: 50px; font-size: 16px; width: 100%; display: flex; align-items: center; justify-content: center; text-decoration: none; }
+.inst-tip { font-size: 14px !important; color: var(--ink-2) !important; }
+.inst-steps { margin: 0; padding-left: 22px; display: grid; gap: 6px; font-size: 15px; line-height: 1.55; }
 .login-head h1 { margin: 0; font-size: 24px; font-weight: 800; word-break: keep-all; text-wrap: balance; }
 .login-head p { margin: 4px 0 0; font-size: 15px; color: var(--ink-2); }
 .login-list { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; }
@@ -555,6 +563,7 @@ a.btn { color: var(--ink); text-decoration: none; display: inline-flex; align-it
 
 <script src="config.js"></script>
 <script src="vendor/supabase.js"></script>
+<script src="install.js"></script>
 <script src="supa-db.js"></script>
 <script src="core.js"></script>
 <script src="app.js"></script>

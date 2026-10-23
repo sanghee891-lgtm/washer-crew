@@ -231,6 +231,7 @@
       if (REQ.open) renderRequests();
     });
     if (S.push) refreshPushState();
+    if (I) I.onChange(function () { renderBanner(); if (S.tab === "settings") renderBody(); });
     if (navigator.serviceWorker) navigator.serviceWorker.addEventListener("message", function (e) {
       if (e.data && e.data.url) handleLink(e.data.url);
     });
@@ -417,7 +418,8 @@
   function reqToForm(q) {
     var items = C.cleanItems(q.items).map(function (it) { return { type: it.type, model: "", qty: it.qty, work: it.work }; });
     return {
-      time: /오후/.test(q.timeSlot || "") ? "13:00" : "09:00",
+      // 고객이 고른 시각(예: 14:30)을 그대로, 예전 요청의 오전/오후는 9시/13시로
+      time: /^\d{1,2}:\d{2}$/.test(q.timeSlot || "") ? q.timeSlot : /오후/.test(q.timeSlot || "") ? "13:00" : "09:00",
       customer: { name: q.name, phone: C.formatPhone(q.phone), address: q.address },
       moveTo: { address: q.moveTo || "", floor: "", elevator: "" },
       items: items.length ? items : undefined,
@@ -486,7 +488,35 @@
     renderBanner();
     if (S.tab === "settings") renderBody();
   }
+  // ---------------- 홈 화면 앱 설치 ----------------
+  var I = window.WCInstall || null;
+  function installNoticeHtml() {
+    if (!I || !I.needed()) return "";
+    if (I.inApp()) return I.inAppBoxHtml(); // 카톡 안: 나중에 없이 항상(설치·알림 둘 다 안 되므로)
+    if (Date.now() < +(store("installLater") || 0)) return "";
+    return '<div class="notice" data-testid="install-notice"><div class="notice-h">' + ntIc("push") + "<b>홈 화면에 앱을 설치하세요</b></div>" +
+      '<div class="notice-line">아이콘을 누르면 바로 열리고, 휴대폰 알림도 받을 수 있어요.</div>' +
+      '<div class="notice-acts"><button class="btn" data-act="install-later">나중에</button>' +
+      '<button class="btn primary" data-act="install" data-testid="install-btn">홈 화면에 앱 설치</button></div></div>';
+  }
+  async function doInstall() {
+    if (!I) return;
+    var res = await I.prompt();
+    if (res === "installed") { toast("홈 화면에 설치했어요. 이제 아이콘으로 여세요."); renderBanner(); return; }
+    if (res === "dismissed") return;
+    openModal("<h2>홈 화면에 앱 설치</h2>" + I.stepsHtml() +
+      '<p class="muted" style="font-size:14px">설치한 뒤에는 홈 화면의 <b>세탁기 크루</b> 아이콘으로 여세요. 알림도 그때 켤 수 있어요.</p>' +
+      '<button class="btn primary wide" data-close-modal>알겠어요</button>', function (e) { if (e.target.closest("[data-close-modal]")) closeModal(); });
+  }
+  function installStateHtml() {
+    if (!I) return "";
+    if (!I.needed()) return '<p style="margin:0"><b>홈 화면 앱으로 열었어요.</b></p>';
+    if (I.inApp()) return I.inAppBoxHtml();
+    return '<p style="margin:0 0 8px">아직 설치하지 않았어요.</p><button class="btn primary" data-act="install" data-testid="install-settings">홈 화면에 앱 설치</button>';
+  }
+
   function pushNoticeHtml() {
+    if (I && I.inApp()) return ""; // 앱 안 브라우저는 위 안내로 대신
     if (!S.push || (S.pushState !== "off" && S.pushState !== "need-install")) return "";
     if (Date.now() < +(store("pushLater") || 0)) return "";
     var later = '<button class="btn" data-act="push-later">나중에</button>';
@@ -511,7 +541,7 @@
     if (st === "off") return '<p style="margin:0 0 8px">꺼져 있어요.</p><button class="btn primary" data-act="push-on">알림 켜기</button>';
     if (st === "denied") return '<p style="margin:0">알림이 막혀 있어요. 휴대폰 <b>설정 → 알림</b>에서 이 앱(또는 크롬)의 알림을 허용한 뒤 다시 열어 주세요.</p>';
     if (st === "need-install") return '<p style="margin:0">아이폰은 사파리 아래 <b>공유</b> 버튼 → <b>홈 화면에 추가</b>를 누른 뒤, 홈 화면 아이콘으로 열어야 알림을 받을 수 있어요(iOS 16.4 이상).</p>';
-    if (st === "unsupported") return '<p style="margin:0">이 브라우저는 알림을 지원하지 않아요. 크롬(안드로이드)이나 사파리(아이폰)로 열어 주세요.</p>';
+    if (st === "unsupported") return I && I.inApp() ? I.inAppBoxHtml() : '<p style="margin:0">이 브라우저는 알림을 지원하지 않아요. 크롬(안드로이드)이나 사파리(아이폰)로 열어 주세요.</p>';
     return '<p class="muted" style="margin:0">확인 중…</p>';
   }
 
@@ -682,7 +712,7 @@
         nl.slice(0, 5).map(function (r) { return '<button class="notice-row" data-open="' + esc(r.id) + '">' + esc(noteLine(r)) + "</button>"; }).join("") +
         (nl.length > 5 ? '<div class="muted" style="font-size:13px">외 ' + (nl.length - 5) + "건</div>" : "") + "</div>";
     }
-    if (S.conn === "ok" && S.tab === "list") nt += reqNoticeHtml() + remindNoticeHtml() + pushNoticeHtml();
+    if (S.conn === "ok" && S.tab === "list") nt += installNoticeHtml() + reqNoticeHtml() + remindNoticeHtml() + pushNoticeHtml();
     // 알림 여러 개는 카드 하나에 줄로 묶어 보여 줌
     if (nt) msg += '<div class="notice-list">' + nt + "</div>";
     if (S.conn === "nodb") msg += '<div class="banner">공유 장부에 연결되지 않았어요. 인터넷 연결을 확인하고 화면을 새로고침해 주세요.</div>';
@@ -1112,6 +1142,7 @@
       }).join("") + '</div><p class="muted" style="margin:8px 0 0;font-size:13px">이 기기에서 쓰는 사람을 고르세요. 참여하기·내 일정에 쓰여요.</p>'
         : '<p class="muted" style="margin:0">아래에 직원 명단을 먼저 넣어 주세요.</p>') + "</div>";
 
+    if (I) html += '<div class="section-title">홈 화면 앱</div><div class="panel" data-testid="install-panel">' + installStateHtml() + "</div>";
     if (S.push) html += '<div class="section-title">휴대폰 알림</div><div class="panel" data-testid="push-panel">' + pushStateHtml() + "</div>";
     if (S.bookings) {
       var bookUrl = new URL("book.html", location.href).href;
@@ -1317,6 +1348,8 @@
       if (a === "open-reqs") return openRequests();
       if (a === "open-rem") return openReminders();
       if (a === "push-on") return pushOn();
+      if (a === "install") return doInstall();
+      if (a === "install-later") { store("installLater", String(Date.now() + 3 * 86400000)); renderBanner(); return; }
       if (a === "push-later") { store("pushLater", String(Date.now() + 3 * 86400000)); renderBanner(); return; }
       if (a === "push-off") { S.push.disable().then(refreshPushState); return; }
       if (a === "push-test") { S.push.test().then(function () { toast("시험 알림을 보냈어요. 잠시 뒤 휴대폰을 확인하세요."); }, function () { toast("보내지 못했어요. 다시 눌러 주세요."); }); return; }
