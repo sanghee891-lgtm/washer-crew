@@ -845,7 +845,9 @@
   function stepperHtml(r) {
     var st = stageOf(r);
     if (st.key === "canceled") return '<div class="stepper canceled">취소된 예약</div>';
-    return '<ol class="stepper" aria-label="진행 단계">' + C.STAGES.slice(1).map(function (g) {
+    return '<ol class="stepper" aria-label="진행 단계">' + C.STAGES.slice(1).filter(function (g) {
+      return (g.key !== "moving" && g.key !== "working") || g.key === st.key;
+    }).map(function (g) {
       var i = C.STAGES.indexOf(g);
       return '<li class="' + (i < st.step ? "past" : i === st.step ? "now" : "") + '">' + esc(g.label) + "</li>";
     }).join("") + "</ol>";
@@ -876,19 +878,17 @@
     return '<button class="' + (cls || "lk") + '" data-act="photos" data-testid="photos-btn">' + ICON.camera + '<span class="num">' + (n ? "사진 " + n : cls ? "사진" : "사진 추가") + "</span></button>";
   }
 
-  // 다음 단계(이동 시작·작업 시작·작업 완료)는 누구나, 입금확인은 넣은 사람·사장님만
+  // 카드 아래 버튼: 완료(누구나)·입금확인(넣은 사람·사장님). 이동 시작·작업 시작 단계 버튼은 쓰지 않음
   function stepActs(r, today) {
     if (!canWrite() || r.status === "canceled") return "";
-    var nx = C.nextStatus(r), out = "";
-    if (nx) out += '<button class="btn primary" data-act="stage" data-v="' + nx.s + '" data-testid="next-stage">' + esc(nx.label) + "</button>";
-    out += quickActs(r, today);
+    var out = quickActs(r, today);
     return out ? '<div class="c-steps">' + out + "</div>" : "";
   }
   // 완료는 누구나, 입금확인은 예약을 넣은 사람·사장님만
   function quickActs(r, today) {
     var acts = "";
     if (!canWrite() || r.status === "canceled") return acts;
-    if (r.status === "scheduled" && r.date <= today) acts += '<button class="btn good" data-act="done" data-testid="quick-done">완료</button>';
+    if ((r.status === "scheduled" || r.status === "moving" || r.status === "working") && r.date <= today) acts += '<button class="btn good" data-act="done" data-testid="quick-done">완료</button>';
     if (r.status === "done" && !C.isPaid(r) && canEditRes(r)) acts += '<button class="btn good" data-act="paid" data-testid="quick-paid">입금확인</button>';
     return acts;
   }
@@ -1513,6 +1513,7 @@
     if (dr && dr.data && (!r || dr.at > (r.updatedAt || r.createdAt || "")) && !F.readOnly) F.draft = dr;
     renderForm();
     $("#sheet").hidden = false;
+    growMemo(); // 화면이 보인 뒤에 높이를 재야 메모 전체가 보임
     document.body.style.overflow = "hidden";
     pushLayer();
     if (!id) setTimeout(function () { var n = $("#f-name"); if (n && S.wide) n.focus(); }, 50);
@@ -1535,6 +1536,24 @@
     }).join("") + "</div>";
   }
 
+  function memoBlock(d) {
+    return '<div class="fs memo-fs"><div class="f"><label for="f-note" class="memo-lab">메모 (고객 요청사항)</label>' +
+      '<textarea class="inp memo-big" id="f-note" placeholder="고객 요청사항 등" data-testid="f-note">' + esc(d.note) + "</textarea></div></div>";
+  }
+  function statusChips(cur) {
+    var keys = ["scheduled", "done", "canceled"];
+    if (cur === "moving" || cur === "working") keys.splice(1, 0, cur);
+    return chipGroup("status", keys, cur, keys.map(function (k) { return C.STATUS[k]; }));
+  }
+
+  // 예약 상세의 메모: 내용이 많아도 스크롤 없이 한눈에 보이게 높이를 내용에 맞춤
+  function growMemo() {
+    var t = $("#f-note");
+    if (!t) return;
+    t.style.height = "auto";
+    t.style.height = Math.max(t.scrollHeight + 2, 132) + "px";
+  }
+
   function renderForm() {
     var d = F.data, e = F.errors, c = d.customer, site = d.site;
     var custom = DUR.indexOf(+d.durationMin) < 0;
@@ -1544,6 +1563,7 @@
       '<div class="sheet-h wrap"><h2 id="formTitle">' + (F.id ? "예약 수정" : "새 예약") + '</h2><button class="icon-btn" data-x aria-label="닫기">' + ICON.close + "</button></div>" +
       '<form class="sheet-b wrap" id="form" novalidate>' +
       '<div id="liveWarn"></div><div id="draftNote"></div>' +
+      (F.id ? memoBlock(d) : "") +
 
       '<div class="fs"><h3><span class="no">1</span>일정</h3><div class="f2">' +
         '<div class="f"><label for="f-date">예약일자</label><input class="inp" type="date" id="f-date" value="' + esc(d.date) + '" data-testid="f-date">' + (e.date ? '<span class="err">' + e.date + "</span>" : "") + "</div>" +
@@ -1579,9 +1599,9 @@
           (S.staff.length ? S.staff.map(function (p) {
             return '<button type="button" class="chip" data-w="' + esc(p.id) + '" aria-pressed="' + (d.workers[p.id] === true) + '">' + esc(p.name) + "</button>";
           }).join("") : '<span class="muted">직원·설정에서 명단을 먼저 넣어 주세요.</span>') + '</div><div class="wn" id="w-crew"></div></div>' +
-        (F.id ? '<div class="f"><span class="lab">진행 상태</span>' + chipGroup("status", ["scheduled", "moving", "working", "done", "canceled"], d.status, ["확정", "이동 중", "작업 중", "완료", "취소"]) + "</div>" : "") +
+        (F.id ? '<div class="f"><span class="lab">진행 상태</span>' + statusChips(d.status) + "</div>" : "") +
       "</div>" +
-      '<div class="fs"><div class="f"><label for="f-note">메모 (고객 요청사항)</label><textarea class="inp" id="f-note" placeholder="고객 요청사항 등">' + esc(d.note) + "</textarea></div></div>" +
+      (F.id ? "" : memoBlock(d)) +
 
       '<details class="fs"' + (site.floor || site.elevator || site.parking || site.memo ? " open" : "") + '><summary>현장 정보 (층수·엘리베이터·주차)</summary>' +
         '<div class="f2"><div class="f"><label for="f-floor">층수</label><input class="inp" id="f-floor" inputmode="numeric" value="' + esc(site.floor) + '" placeholder="예: 12"></div>' +
@@ -1609,6 +1629,7 @@
         " 참여·불참·보류와 사진은 예약 목록에서 누구나 할 수 있어요.</div>");
     }
     renderFoot();
+    growMemo();
     refreshFormLive();
     renderHist();
     bindForm();
@@ -1858,6 +1879,7 @@
       }
     };
     form.addEventListener("input", function (e) {
+      if (e.target.id === "f-note") growMemo();
       if (e.target.id === "f-total") {
         var n = C.parseWon(e.target.value);
         e.target.value = n ? C.formatWon(n) : "";

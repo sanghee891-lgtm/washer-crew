@@ -153,14 +153,21 @@ main { padding-block: 10px 24px; }
 .day-h .sun { color: var(--bad); }
 .day-h .tag { font-size: 12px; font-weight: 700; background: var(--accent); color: var(--accent-ink); padding: 1px 8px; border-radius: 999px; }
 .day-h .meta { margin-left: auto; font-size: 13px; color: var(--ink-3); }
-.cards { display: grid; gap: 10px; }
-.card { background: var(--surface); border-radius: var(--r); border: 1px solid var(--line); display: grid; grid-template-columns: 78px 1fr; cursor: pointer; overflow: hidden; }
+.cards { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr); }
+.card { background: var(--surface); border-radius: var(--r); border: 1px solid var(--line); display: grid; grid-template-columns: 78px minmax(0, 1fr); cursor: pointer; overflow: hidden; min-width: 0; max-width: 100%; }
+.c-main > * { min-width: 0; max-width: 100%; }
 .card:hover { border-color: var(--accent); }
 .c-time { padding: 14px 0 14px 14px; display: flex; flex-direction: column; gap: 1px; border-right: 1px solid var(--line); }
+@media (max-width: 380px) {
+  .card { grid-template-columns: 64px minmax(0, 1fr); }
+  .c-time { padding-left: 10px; }
+  .c-time b { font-size: 17px; }
+  .c-main { padding-left: 10px; padding-right: 10px; }
+}
 .c-time b { font-size: 19px; font-weight: 800; letter-spacing: -.02em; }
 .c-time span { font-size: 12.5px; color: var(--ink-3); }
 .c-time .dur { margin-top: 4px; font-weight: 600; color: var(--ink-2); }
-.c-main { padding: 12px 14px 14px; min-width: 0; display: grid; gap: 7px; }
+.c-main { padding: 12px 14px 14px; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 7px; }
 .c-r1 { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .c-name { font-size: 18px; font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .c-amt { margin-left: auto; font-size: 18px; font-weight: 800; white-space: nowrap; }
@@ -220,17 +227,23 @@ main { padding-block: 10px 24px; }
 .c-chev { margin-left: auto; color: var(--ink-3); display: grid; transition: transform .15s; }
 .c-chev svg { width: 20px; height: 20px; }
 .card.open .c-chev { transform: rotate(180deg); }
-.c-quick { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 6px; }
+.c-quick { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px; }
 .qb { min-height: 56px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); font-weight: 700; font-size: 13.5px; color: var(--ink); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; padding: 4px; white-space: nowrap; min-width: 0; }
 .qb svg { width: 20px; height: 20px; color: var(--accent); flex: none; }
 .qb span { overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .c-steps { display: flex; gap: 6px; flex-wrap: wrap; }
-.c-steps .btn { flex: 1; min-height: 44px; font-size: 15px; }
-.c-more { display: grid; gap: 8px; border-top: 1px solid var(--line); padding-top: 10px; }
+.c-steps .btn { flex: 1 1 0; min-width: 0; min-height: 44px; font-size: 15px; }
+.c-more { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; border-top: 1px solid var(--line); padding-top: 10px; }
+.c-more > *, .c-links > * { min-width: 0; }
 .c-moneyrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .c-moneyrow .c-amt { margin-left: 0; }
 .c-moneyrow .c-pay { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; color: var(--ink-2); }
-.c-note { font-size: 14px; color: var(--ink-2); white-space: pre-wrap; word-break: keep-all; }
+.c-note { font-size: 14px; color: var(--ink-2); white-space: pre-wrap; word-break: keep-all; overflow-wrap: anywhere; }
+/* 예약 상세 맨 위 메모: 크게, 내용 전체가 한눈에 */
+.memo-fs { border: 2px solid var(--accent); }
+.memo-lab { font-size: 15px !important; color: var(--accent) !important; font-weight: 800 !important; }
+textarea.memo-big { font-size: 16px; line-height: 1.65; min-height: 132px; resize: vertical; overflow: hidden; }
+textarea.memo-big:disabled { color: var(--ink); -webkit-text-fill-color: var(--ink); opacity: 1; background: var(--surface); }
 .c-note b { color: var(--ink); margin-right: 4px; }
 .pill.stg-confirmed { background: var(--accent-soft); color: var(--accent); }
 .pill.stg-assigned { background: var(--accent); color: var(--accent-ink); }
@@ -333,15 +346,15 @@ textarea.inp { height: auto; min-height: 72px; padding: 10px 12px; resize: verti
 .sheet-f { display: flex; flex-wrap: wrap; gap: 8px; padding-block: 10px calc(10px + env(safe-area-inset-bottom, 0px)); background: var(--surface); border-top: 1px solid var(--line); }
 .sheet-f .btn { min-height: 50px; font-size: 16px; }
 .sheet-f .grow { flex: 1; }
-.fs { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 14px; margin-bottom: 10px; display: grid; gap: 10px; }
+.fs { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 14px; margin-bottom: 10px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
 .fs > h3 { margin: 0; font-size: 16px; font-weight: 800; color: var(--ink); letter-spacing: -.01em; }
 .f { display: grid; gap: 5px; min-width: 0; }
 .f > label, .f > .lab { font-size: 13.5px; font-weight: 600; color: var(--ink-2); }
-.f2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.f2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
 .err { color: var(--bad); font-size: 13px; font-weight: 600; }
 .endinfo { font-size: 14px; color: var(--ink-2); }
 .endinfo b { color: var(--ink); }
-.item { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 10px; border-radius: 10px; background: var(--surface-2); }
+.item { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px; padding: 10px; border-radius: 10px; background: var(--surface-2); }
 .item .full { grid-column: 1 / -1; }
 .item select, .item input { height: 42px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); padding: 0 10px; width: 100%; min-width: 0; }
 .qty { display: flex; align-items: center; gap: 4px; }

@@ -313,18 +313,19 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     await kimCard().locator("[data-testid=card-more]").waitFor();
     ok((await kimCard().locator("[data-testid=card-more]").innerText()).includes("50,000원"));
   });
-  await step("진행 단계: 이동 시작 → 작업 시작 → 작업 완료, 누가·언제 기록", async () => {
+  await step("이동 시작·작업 시작 버튼 없음, [완료]로 작업 완료 + 누가·언제 기록", async () => {
     eq(await kimCard().locator("[data-testid=stage]").innerText(), "확정");
-    for (const [btn, label] of [["이동 시작", "이동 중"], ["작업 시작", "작업 중"], ["작업 완료", "작업 완료"]]) {
-      eq(await kimCard().locator("[data-testid=next-stage]").innerText(), btn);
-      await kimCard().locator("[data-testid=next-stage]").click();
-      await p.waitForFunction((l) => [...document.querySelectorAll("[data-testid=card]")].some((c) => c.textContent.includes("남의고객") && c.querySelector("[data-testid=stage]").textContent === l), label);
-    }
+    eq(await p.locator("[data-testid=next-stage]").count(), 0, "단계 버튼 없음");
+    const txtAll = await p.locator("#view").innerText();
+    ok(!txtAll.includes("이동 시작") && !txtAll.includes("작업 시작"), "문구도 없음");
+    await kimCard().locator("[data-testid=quick-done]").click();
+    await p.waitForFunction(() => [...document.querySelectorAll("[data-testid=card]")].some((c) => c.textContent.includes("남의고객") && c.querySelector("[data-testid=stage]").textContent === "작업 완료"));
     const log = Object.values((await fakeDb(p)).docs["reservations/r_kim"].log);
-    eq(log.map((e) => e.s).sort(), ["done", "moving", "working"]);
+    eq(log.map((e) => e.s), ["done"]);
     ok(log.every((e) => e.by === "smvivcjg03" && e.at), "변경한 사람·시각");
     await kimCard().locator("[data-testid=status-log]").waitFor();
-    ok((await kimCard().locator("[data-testid=status-log]").innerText()).includes("이동 시작 · 신창민"));
+    ok((await kimCard().locator("[data-testid=status-log]").innerText()).includes("작업 완료 · 신창민"));
+    ok(!(await kimCard().locator(".stepper").innerText()).includes("이동 중"), "진행 단계 표시에 이동 중 없음");
   });
 
   // ---------------- 저장 전 점검·임시 저장·저장 상태 ----------------
@@ -589,6 +590,53 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     await p.waitForSelector("[data-testid=login-신창민]");
     eq(await p.evaluate(() => sessionStorage.getItem("fakesb.session")), null);
   });
+  // ---------------- 휴대폰 폭에서 카드가 화면 안에 ----------------
+  console.log("휴대폰 폭(360~412px) 한 화면");
+  {
+    const longNote = "이사날 10월 24일 토 오전 10시 건조기밑에 서랍장 사다리차로 내려드림\n010-8487-8687\n\n보낼주소\n일산동구 산두로 31 , 2층\n\n받을 주소\n서울특별시 노원구 덕릉로94길 10 (중계동, 경남아너스빌) 102동 1105호\n\n10월 24일 토 오전10시  건조기밑에 서랍장 사다리차로 내려드림   현금가15만원 문 또는 창문탈거시 추가비발생고지";
+    const wseed = { docs: {
+      "config/staff": STAFF,
+      "reservations/r_long": { date: TODAY, time: "10:00", durationMin: 120, status: "scheduled", needed: 2,
+        customer: { name: "", phone: "010-8487-8687", address: "일산동구 산두로 31 ~이삿짐에서 1층으로 내려드림 그다음 사다리차" },
+        moveTo: { address: "서울특별시 노원구 덕릉로94길 10 (중계동, 경남아너스빌) 102동 1105호", floor: "11", elevator: "있음" },
+        items: [{ type: "건조기", qty: 1, work: "이전설치" }], total: 1500, payment: { method: "계좌이체", paid: false },
+        workers: { smvivcjg01: "no" }, note: longNote, createdBy: "smvivcjg03", createdAt: "2026-01-01T00:00:00Z" }
+    } };
+    for (const w of [360, 384, 390, 412]) {
+      await step(w + "px: 카드·버튼·주소·메모가 화면 폭 안", async () => {
+        const c = await browser.newContext({ viewport: { width: w, height: 800 }, hasTouch: true });
+        const wp = await webPage(c, { seed: wseed, session: "u-shin", label: "w" + w });
+        await wp.waitForSelector("[data-testid=card]");
+        await wp.locator("[data-testid=card] .c-name").first().click();
+        await wp.locator("[data-testid=card-more]").first().waitFor();
+        const r = await wp.evaluate(() => {
+          const vw = window.innerWidth, bad = [];
+          document.querySelectorAll("[data-testid=card], [data-testid=card] button, [data-testid=card] .c-note, [data-testid=card] .lk").forEach((el) => {
+            const b = el.getBoundingClientRect();
+            if (b.width && (b.right > vw + 0.5 || b.left < -0.5)) bad.push((el.className || el.tagName) + ":" + Math.round(b.right));
+          });
+          return { sw: document.documentElement.scrollWidth, vw, bad };
+        });
+        ok(r.sw <= r.vw, "가로 스크롤 " + r.sw + ">" + r.vw);
+        eq(r.bad.length, 0, "화면 밖: " + r.bad.slice(0, 5).join(", "));
+        eq(await wp.locator("[data-testid=rsvp-maybe]").count(), 1, "보류 버튼도 보임");
+        if (w === 384) await wp.screenshot({ path: path.join(process.env.SHOTS || __dirname, "w384-card.png"), fullPage: true });
+        // 예약 상세: 메모가 맨 위에 크게, 내용 전체가 보임
+        await wp.locator("[data-testid=detail]").first().click();
+        await wp.waitForSelector("#sheet:not([hidden]) [data-testid=f-note]");
+        const m = await wp.evaluate(() => {
+          const t = document.querySelector("[data-testid=f-note]");
+          const first = document.querySelector("#form .fs");
+          return { top: first.contains(t), full: t.scrollHeight <= t.clientHeight + 2, h: t.clientHeight };
+        });
+        ok(m.top, "메모가 첫 칸");
+        ok(m.full && m.h > 200, "메모 전체가 보임(높이 " + m.h + ")");
+        if (w === 384) await wp.screenshot({ path: path.join(process.env.SHOTS || __dirname, "w384-detail.png") });
+        await c.close();
+      });
+    }
+  }
+
   await step("가로 스크롤 없음·콘솔 오류 0건", async () => {
     const r = await p.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]);
     ok(r[0] <= r[1], r.join(">"));
