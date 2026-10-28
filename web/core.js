@@ -375,10 +375,9 @@
       apps = NAV_APPS.map(function (a) {
         var href = ios[a.key];
         if (platform === "android") {
+          // 대체 주소를 넣지 않음: 앱이 없으면 크롬이 플레이스토어를 열고, 장부 화면은 그대로 남음
           var m = /^([a-z-]+):\/\/(.*)$/.exec(href);
-          var fallback = web[a.key] || "https://play.google.com/store/apps/details?id=" + a.pkg;
-          href = "intent://" + m[2] + "#Intent;scheme=" + m[1] + ";package=" + a.pkg +
-            ";S.browser_fallback_url=" + encodeURIComponent(fallback) + ";end";
+          href = "intent://" + m[2] + "#Intent;scheme=" + m[1] + ";package=" + a.pkg + ";end";
         }
         // 카카오내비는 주소를 넘기는 공개 링크가 없어 앱만 열고 주소는 복사해 둠
         return { key: a.key, label: a.label, href: href, copyFirst: a.key === "kakaonavi" };

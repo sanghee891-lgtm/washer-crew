@@ -792,6 +792,22 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
       await ip.waitForSelector("[data-testid=install-panel] [data-testid=open-external]");
       await c.close();
     });
+    await step("갤럭시: 주소 → 티맵·카카오맵 버튼은 같은 창에서 앱 열기(intent, 새 창 아님)", async () => {
+      const c = await browser.newContext({ viewport: { width: 384, height: 800 }, userAgent: UA.chrome, hasTouch: true });
+      const ip = await webPage(c, { label: "nav", session: "u-shin", seed: { docs: { "config/staff": STAFF,
+        "reservations/r_nav": { date: TODAY, time: "10:00", durationMin: 120, status: "scheduled", customer: { name: "길찾기고객", phone: "010-1111-2222", address: "수원시 영통구 광교로 1" },
+          items: [{ type: "통돌이", qty: 1, work: "세척" }], total: 100000, payment: { method: "미정", paid: false }, workers: {}, createdBy: "smvivcjg03", createdAt: "2026-01-01T00:00:00Z" } } } });
+      await ip.locator("[data-testid=card]", { hasText: "길찾기고객" }).locator("[data-testid=nav]").click();
+      const enc = encodeURIComponent("수원시 영통구 광교로 1");
+      const tm = ip.locator("[data-testid=nav-tmap]");
+      eq(await tm.getAttribute("href"), "intent://search?name=" + enc + "#Intent;scheme=tmap;package=com.skt.tmap.ku;end");
+      eq(await tm.getAttribute("target"), null, "티맵: 같은 창");
+      const km = ip.locator("[data-testid=nav-kakaomap]");
+      eq(await km.getAttribute("href"), "intent://search?q=" + enc + "#Intent;scheme=kakaomap;package=net.daum.android.map;end");
+      eq(await km.getAttribute("target"), null, "카카오맵: 같은 창");
+      eq(await ip.locator("#modal a[data-nav][target]").count(), 0, "앱 버튼 중 새 창 없음");
+      await c.close();
+    });
     await step("갤럭시 크롬: [홈 화면에 앱 설치] → 크롬 설치 창 → 설치됨", async () => {
       const fake = () => {
         window.__prompted = 0;

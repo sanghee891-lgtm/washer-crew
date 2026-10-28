@@ -221,14 +221,13 @@ t("iOS: 티맵·카카오맵·네이버 앱 주소 검색 링크", () => {
   assert.strictEqual(by.kakaonavi.copyFirst, true);
   assert.ok(!by.tmap.copyFirst);
 });
-t("Android: intent 링크(패키지·대체 주소)", () => {
+t("Android: intent 링크(패키지, 대체 주소 없음)", () => {
   const l = C.navLinks(ADDR, "android");
   const by = Object.fromEntries(l.apps.map(a => [a.key, a]));
-  assert.ok(by.tmap.href.startsWith("intent://search?name=" + ENC + "#Intent;scheme=tmap;package=com.skt.tmap.ku;S.browser_fallback_url="), by.tmap.href);
-  assert.ok(by.tmap.href.endsWith(";end"));
+  assert.strictEqual(by.tmap.href, "intent://search?name=" + ENC + "#Intent;scheme=tmap;package=com.skt.tmap.ku;end");
+  assert.strictEqual(by.kakaomap.href, "intent://search?q=" + ENC + "#Intent;scheme=kakaomap;package=net.daum.android.map;end");
   assert.ok(by.kakaonavi.href.includes("package=com.locnall.KimGiSa"));
-  assert.ok(by.kakaonavi.href.includes(encodeURIComponent("https://play.google.com/store/apps/details?id=com.locnall.KimGiSa")));
-  assert.ok(by.kakaomap.href.includes(encodeURIComponent("https://map.kakao.com/link/search/" + ENC)));
+  assert.ok(l.apps.every(a => !a.href.includes("browser_fallback_url")), "앱이 없으면 플레이스토어(장부 화면은 그대로)");
   assert.ok(!/[ ,]/.test(by.tmap.href.split("#")[0]), "주소가 인코딩되지 않음");
 });
 t("PC: 앱 버튼 없이 웹 지도만", () => {

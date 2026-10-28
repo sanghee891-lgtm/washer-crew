@@ -1474,7 +1474,8 @@
     // 내 내비 앱을 맨 위 큰 버튼으로
     var apps = links.apps.slice().sort(function (a, b) { return (b.key === mine) - (a.key === mine); });
     var a = function (l, cls, main) {
-      return '<a class="btn wide' + cls + '" target="_blank" rel="noopener" href="' + esc(l.href) + '" data-nav="' + l.key + '"' +
+      // 앱 열기 링크는 같은 창에서(새 창으로 열면 홈 화면 앱·카톡 안에서 내비 앱이 안 열림)
+      return '<a class="btn wide' + cls + '" href="' + esc(l.href) + '" data-nav="' + l.key + '"' +
         (l.copyFirst ? " data-navcopy" : "") + ' data-testid="nav-' + l.key + '">' + esc(l.label) +
         (main ? (l.copyFirst ? " 열기 (주소 자동 복사)" : " 길찾기") : "") + "</a>";
     };
