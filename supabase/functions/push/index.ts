@@ -1,5 +1,5 @@
 // 직원 휴대폰으로 웹 푸시 알림을 보냅니다.
-// - DB 트리거·예약 작업(pg_net)이 x-hook-secret 과 함께 부릅니다: reservation(새 예약), booking(새 고객 요청), daily(내일 예약 확인)
+// - DB 트리거·예약 작업(pg_net)이 x-hook-secret 과 함께 부릅니다: reservation(새 예약), res_change(날짜·시간·주소 변경, 취소), res_delete(삭제), booking(새 고객 요청), daily(내일 예약 확인)
 // - 앱의 [알림 시험] 버튼은 로그인 토큰으로 부르고, 본인 기기에만 test 알림을 보냅니다.
 // 나중에 유료 문자 API(솔라피 등)로 고객에게 자동 발송하려면 sendCustomerSms() 한 곳만 채우면 됩니다.
 import webpush from "npm:web-push@3.6.7";
@@ -54,6 +54,40 @@ async function buildMessage(type: string, input: Record<string, unknown>): Promi
       msg: { title: "새 예약", body: `${dayLabel(r.date)} ${r.time} · ${who}${by}`, url: `/?open=${id}`, tag: `res-${id}` },
       excludeStaff: r.createdBy || undefined,
     };
+  }
+  if (type === "res_change" || type === "res_delete") {
+    const path = String(input.path);
+    const { data } = await sb.from("docs").select("data").eq("path", path).maybeSingle();
+    const r = data?.data;
+    if (!r) return null;
+    const names = await staffNames();
+    const who = r.customer?.name || itemsSummary(r.items) || "고객";
+    const id = path.split("/").pop();
+    const when = (d?: string, t?: string) => (d ? dayLabel(d) : "") + (t ? " " + t : "");
+    if (type === "res_delete") {
+      const by = names[r.deletedBy] ? ` · ${names[r.deletedBy]}님이 삭제` : "";
+      return {
+        msg: { title: "예약 삭제", body: `${when(r.date, r.time)} · ${who}${by}`, url: "/", tag: `res-${id}` },
+        excludeStaff: r.deletedBy || undefined,
+      };
+    }
+    const old = (input.old || {}) as Record<string, string | null>;
+    const by = names[r.updatedBy] ? ` · ${names[r.updatedBy]}님` : "";
+    const wasCanceled = old.status === "canceled", isCanceled = r.status === "canceled";
+    let title = "예약 변경", body: string;
+    if (!wasCanceled && isCanceled) {
+      title = "예약 취소";
+      body = `${when(r.date, r.time)} · ${who}${by}`;
+    } else {
+      if (wasCanceled && !isCanceled) title = "예약 다시 살림";
+      const parts: string[] = [];
+      if (old.date !== (r.date ?? null) || old.time !== (r.time ?? null)) parts.push(`${when(old.date || "", old.time || "")} → ${when(r.date, r.time)}`);
+      else parts.push(when(r.date, r.time));
+      if (old.address !== (r.customer?.address ?? null)) parts.push("주소 변경");
+      if (old.moveTo !== (r.moveTo?.address ?? null)) parts.push("도착지 변경");
+      body = `${who} · ${parts.join(" · ")}${by}`;
+    }
+    return { msg: { title, body, url: `/?open=${id}`, tag: `res-${id}` }, excludeStaff: r.updatedBy || undefined };
   }
   if (type === "booking") {
     const { data: b } = await sb.from("booking_requests").select("*").eq("id", String(input.id)).maybeSingle();
