@@ -831,6 +831,7 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
       await ip.click("[data-testid=login-install]");
       await ip.waitForSelector(".inst-steps");
       ok((await ip.innerText(".inst-steps")).includes("점 3개"));
+      ok((await ip.innerText("[data-testid=inst-tips]")).includes("앱 목록에서"), "갤럭시: 설치 후 안 보일 때 안내");
       await c.close();
     });
     await step("아이폰 사파리: 설치 버튼 → '공유 → 홈 화면에 추가' 안내", async () => {

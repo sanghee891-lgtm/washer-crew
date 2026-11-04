@@ -53,8 +53,17 @@
     "android-chrome": ["오른쪽 위 <b>점 3개(⋮)</b>를 누르세요.", "<b>홈 화면에 추가</b> 또는 <b>앱 설치</b>를 누르세요.", "<b>설치</b>(또는 <b>추가</b>)를 누르면 끝이에요."],
     "pc": ["주소창 오른쪽 <b>설치</b> 아이콘을 누르거나, 브라우저 메뉴에서 <b>앱 설치</b>를 누르세요."]
   };
+  // 갤럭시에서 "설치했는데 안 보여요"가 생기는 흔한 경우
+  var GALAXY_TIPS = [
+    "<b>설치했는데 홈 화면에 안 보이면</b>: 화면을 위로 밀어 앱 목록에서 <b>세탁기 크루</b>를 찾아, 길게 눌러 <b>홈 화면에 추가</b>를 누르세요.",
+    "<b>메뉴에 앱 열기가 보이면</b>: 이미 설치돼 있어요. 앱 목록에서 찾아 여세요.",
+    "<b>추가를 눌러도 아무 일이 없으면</b>: 홈 화면 빈 곳을 길게 누름 → <b>설정</b> → <b>홈 화면 레이아웃 잠금</b>을 끄고 다시 해 보세요."
+  ];
   function stepsHtml() {
-    return '<ol class="inst-steps">' + (STEPS[browser()] || STEPS.pc).map(function (s) { return "<li>" + s + "</li>"; }).join("") + "</ol>";
+    var b = browser();
+    return '<ol class="inst-steps">' + (STEPS[b] || STEPS.pc).map(function (s) { return "<li>" + s + "</li>"; }).join("") + "</ol>" +
+      (b === "android-chrome" || b === "samsung"
+        ? '<ul class="inst-tips" data-testid="inst-tips">' + GALAXY_TIPS.map(function (s) { return "<li>" + s + "</li>"; }).join("") + "</ul>" : "");
   }
 
   // 설치 버튼을 눌렀을 때: 크롬 설치 창이 있으면 띄우고 결과를, 없으면 "manual"
