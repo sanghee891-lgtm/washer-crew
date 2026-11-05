@@ -1025,12 +1025,14 @@
       }).join("") + "</div></div></div>";
 
     var staffIds = S.staff.map(function (p) { return p.id; });
-    html += '<div class="section-title">직원별 참여</div><div class="tbl-wrap"><table class="tbl" data-testid="by-staff"><thead><tr><th>직원</th><th class="r">참여</th><th class="r">완료</th><th class="r">완료 매출(참여 건)</th></tr></thead><tbody>' +
+    html += '<div class="section-title">직원별 매출</div><div class="tbl-wrap"><table class="tbl" data-testid="by-staff"><thead><tr><th>직원</th><th class="r">참여(완료)</th><th class="r">완료 매출</th><th class="r">예정 매출</th></tr></thead><tbody>' +
       (staffIds.length ? staffIds.map(function (id) {
-        var b = s.byStaff[id] || { count: 0, done: 0, revenue: 0 };
-        return "<tr><td><b>" + esc(staffName(id)) + '</b></td><td class="r num">' + b.count + '건</td><td class="r num">' + b.done + '건</td><td class="r num">' + C.formatWon(b.revenue) + "원</td></tr>";
+        var b = s.byStaff[id] || { count: 0, done: 0, revenue: 0, scheduled: 0 };
+        return "<tr><td><b>" + esc(staffName(id)) + '</b></td><td class="r num">' + b.count + "건(" + b.done + ')</td><td class="r num" data-staff-rev="' + esc(id) + '">' + C.formatWon(b.revenue) + '원</td><td class="r num">' + C.formatWon(b.scheduled || 0) + "원</td></tr>";
       }).join("") : '<tr><td colspan="4" class="muted">직원 명단이 비어 있어요.</td></tr>') +
-      "</tbody></table></div>";
+      "</tbody></table></div>" +
+      '<p class="muted" style="margin:6px 2px 0;font-size:13px" data-testid="share-note">예약 금액을 <b>참여한 사람 수로 똑같이 나눈 몫</b>이에요. (예: 15만 원 예약에 3명 참여 → 1인당 5만 원)' +
+      (s.unassignedDone || s.unassignedScheduled ? '<br>참여자를 안 넣은 예약은 빠져요: 완료 ' + C.formatWon(s.unassignedDone) + "원 · 예정 " + C.formatWon(s.unassignedScheduled) + "원" : "") + "</p>";
 
     var methods = C.PAY_METHODS.filter(function (m) { return s.byMethod[m]; });
     if (methods.length) {
@@ -1641,7 +1643,7 @@
       "</div>" +
 
       '<div class="fs"><h3><span class="no">4</span>금액 · 배정</h3>' +
-        '<div class="f"><label for="f-total">총 금액</label><div class="won-inp"><input class="inp num" id="f-total" inputmode="numeric" value="' + (d.total ? C.formatWon(d.total) : "") + '" placeholder="0" data-testid="f-total"><span>원</span></div>' + (e.total ? '<span class="err">' + e.total + "</span>" : "") + '<div class="wn" id="w-total"></div></div>' +
+        '<div class="f"><label for="f-total">총 금액</label><div class="won-inp"><input class="inp num" id="f-total" inputmode="numeric" value="' + (d.total ? C.formatWon(d.total) : "") + '" placeholder="0" data-testid="f-total"><span>원</span></div>' + (e.total ? '<span class="err">' + e.total + "</span>" : "") + '<div class="wn" id="w-total"></div><div class="muted" id="shareInfo" data-testid="share-info" style="font-size:13px;margin-top:4px"></div></div>' +
         '<div class="f"><span class="lab">결제방법</span>' + chipGroup("method", C.PAY_METHODS, d.payment.method) + "</div>" +
         '<label class="toggle"><input type="checkbox" id="f-paid"' + (d.payment.paid ? " checked" : "") + ' data-testid="f-paid">입금 확인됨</label>' +
         '<div class="f"><span class="lab">필요 인원</span>' + chipGroup("needed", [1, 2, 3, 4], d.needed || 2, ["1명", "2명", "3명", "4명"]) + "</div>" +
@@ -1764,6 +1766,13 @@
       warn += '<div class="stale" data-testid="stale">' + esc(who ? who + "님이" : "다른 사람이") + " 방금 이 예약을 고쳤어요. 저장하면 내 입력으로 덮어써요.</div>";
     }
     $("#liveWarn").innerHTML = warn ? '<div style="display:grid;gap:8px;margin-bottom:10px">' + warn + "</div>" : "";
+    var si = $("#shareInfo");
+    if (si) {
+      var sh = C.sharesOf(d), sk = Object.keys(sh), tot = C.parseWon(d.total);
+      si.innerHTML = !tot ? "" : sk.length
+        ? "참여 " + sk.length + "명 · 1인당 <b class=\"num\">" + C.formatWon(Math.floor(tot / sk.length)) + "원</b>"
+        : "참여자를 넣으면 1인당 금액이 나와요.";
+    }
     var w = formWarnings(d);
     ["time", "addr", "dup", "total", "crew"].forEach(function (k) { var el = $("#w-" + k); if (el) el.innerHTML = w[k] || ""; });
     $("#custTitle").textContent = mv ? "고객 · 출발지 · 도착지" : "고객 · 방문 주소";

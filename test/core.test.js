@@ -117,8 +117,21 @@ t("작업별 건수(예약 단위)", () => {
 });
 t("직원별(취소 제외)", () => {
   const s = C.summarize(C.filterMonth(month, "2026-10"));
-  assert.deepStrictEqual(s.byStaff.s1, { count: 2, done: 2, revenue: 230000 });
-  assert.deepStrictEqual(s.byStaff.s2, { count: 1, done: 1, revenue: 80000 });
+  // 같이 참여한 예약은 금액을 참여 인원으로 나눈 몫만
+  const r = C.filterMonth(month, "2026-10").filter(x => x.status !== "canceled");
+  const exp = {};
+  r.forEach(x => { const sh = C.sharesOf(x); Object.keys(sh).forEach(id => { exp[id] = exp[id] || { count: 0, done: 0, revenue: 0, scheduled: 0 }; exp[id].count++; if (x.status === "done") { exp[id].done++; exp[id].revenue += sh[id]; } else exp[id].scheduled += sh[id]; }); });
+  assert.deepStrictEqual(s.byStaff.s1, exp.s1);
+  assert.deepStrictEqual(s.byStaff.s2, exp.s2);
+  const sum = Object.values(s.byStaff).reduce((a, b) => a + b.revenue, 0);
+  assert.strictEqual(sum + s.unassignedDone, s.doneRevenue, "직원 몫 합계 + 참여자 없는 매출 = 완료 매출");
+});
+t("1인당 금액: 똑같이 나누고 남는 원은 앞사람부터", () => {
+  assert.deepStrictEqual(C.splitShares(150000, ["b", "a", "c"]), { a: 50000, b: 50000, c: 50000 });
+  assert.deepStrictEqual(C.splitShares(100000, ["s1", "s2", "s3"]), { s1: 33334, s2: 33333, s3: 33333 });
+  assert.deepStrictEqual(C.splitShares(80000, ["s2"]), { s2: 80000 });
+  assert.deepStrictEqual(C.splitShares(50000, []), {});
+  assert.deepStrictEqual(C.sharesOf({ total: "90,000", workers: { a: true, b: "maybe", c: true } }), { a: 45000, c: 45000 }, "보류·불참은 빼고");
 });
 t("연간 12개월", () => {
   const y = C.summarizeYear(month, 2026);

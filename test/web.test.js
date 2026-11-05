@@ -675,6 +675,23 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     ok(b.docs.some((x) => x.path === "reservations/r_tmr") && b.docs.some((x) => x.path === "config/staff"), "예약·직원 명단 포함");
     await p.evaluate(() => { const d = JSON.parse(localStorage.getItem("fakesb")); d.shopCode = "123456"; localStorage.setItem("fakesb", JSON.stringify(d)); localStorage.setItem("wc.shopCode", "123456"); });
   });
+  await step("같이 참여한 예약: 상세에 1인당 금액, 통계는 참여 인원으로 나눈 몫", async () => {
+    const cells = () => p.evaluate(() => Object.fromEntries([...document.querySelectorAll("[data-staff-rev]")].map((el) => [el.dataset.staffRev, +el.textContent.replace(/[^0-9]/g, "")])));
+    await p.click("[data-testid=tab-stats]");
+    await p.waitForSelector("[data-staff-rev]");
+    const before = await cells();
+    await p.evaluate(async (t) => { const db = await window.claude.use("db"); await db.doc("reservations/r_share").set({ date: t, time: "15:00", durationMin: 60, status: "done", customer: { name: "나눔고객", address: "수원" }, items: [{ type: "통돌이", qty: 1, work: "세척" }], total: 150000, payment: { method: "현금", paid: true }, workers: { smvivcjg00: true, smvivcjg01: true, smvivcjg03: true }, createdBy: "smvivcjg03", createdAt: "2026-01-01T00:00:00Z" }); }, TODAY);
+    await p.click("[data-testid=tab-list]");
+    await p.locator("[data-testid=card]", { hasText: "나눔고객" }).locator("[data-act=detail]").click();
+    await p.waitForFunction(() => document.querySelector("[data-testid=share-info]").textContent.includes("참여 3명 · 1인당 50,000원"));
+    await p.click("[data-testid=f-cancel], [data-x]").catch(() => p.keyboard.press("Escape"));
+    await p.goBack().catch(() => {});
+    await p.click("[data-testid=tab-stats]");
+    await p.waitForFunction((b) => { const el = document.querySelector('[data-staff-rev="smvivcjg00"]'); return el && +el.textContent.replace(/[^0-9]/g, "") !== b; }, before.smvivcjg00);
+    const after = await cells();
+    for (const id of ["smvivcjg00", "smvivcjg01", "smvivcjg03"]) eq(after[id] - before[id], 50000, id + " 몫은 15만 원 ÷ 3명");
+    ok((await p.innerText("[data-testid=share-note]")).includes("참여한 사람 수로 똑같이 나눈 몫"));
+  });
   await step("CSV 받기: 파일 내려받기", async () => {
     await p.click("[data-testid=tab-stats]");
     const [dl] = await Promise.all([p.waitForEvent("download"), p.click("[data-testid=csv]")]);

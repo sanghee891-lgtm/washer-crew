@@ -54,6 +54,17 @@
     return Object.keys(w).filter(function (k) { return w[k] === true; });
   }
 
+  // 금액을 참여 직원 수로 똑같이 나눔. 원 단위로 나누고 남는 몇 원은 앞사람부터 1원씩(합계가 정확히 맞게)
+  function splitShares(total, ids) {
+    var out = {}, n = (ids || []).length;
+    total = Math.max(0, Math.round(total || 0));
+    if (!n) return out;
+    var base = Math.floor(total / n), rest = total - base * n;
+    ids.slice().sort().forEach(function (id, i) { out[id] = base + (i < rest ? 1 : 0); });
+    return out;
+  }
+  function sharesOf(r) { return splitShares(parseWon(r && r.total), assignedWorkers(r)); }
+
   function interval(r) {
     var s = toMin(r.time);
     return [s, s + Math.max(0, +r.durationMin || 0)];
@@ -229,7 +240,7 @@
     var s = {
       count: 0, canceled: 0, done: 0, scheduled: 0,
       doneRevenue: 0, scheduledRevenue: 0, totalRevenue: 0,
-      unpaid: 0, unpaidCount: 0, units: 0,
+      unpaid: 0, unpaidCount: 0, units: 0, unassignedDone: 0, unassignedScheduled: 0,
       byType: {}, byWork: {}, byStaff: {}, byMethod: {}
     };
     TYPES.forEach(function (t) { s.byType[t] = 0; });
@@ -255,10 +266,15 @@
         works[it.work] = true;
       });
       Object.keys(works).forEach(function (w) { s.byWork[w] = (s.byWork[w] || 0) + 1; });
-      assignedWorkers(r).forEach(function (id) {
-        var b = s.byStaff[id] = s.byStaff[id] || { count: 0, done: 0, revenue: 0 };
+      // 직원별 매출 = 참여한 예약 금액을 참여 인원으로 똑같이 나눈 내 몫
+      var shares = splitShares(total, assignedWorkers(r));
+      var ids = Object.keys(shares);
+      if (!ids.length) { if (r.status === "done") s.unassignedDone += total; else s.unassignedScheduled += total; }
+      ids.forEach(function (id) {
+        var b = s.byStaff[id] = s.byStaff[id] || { count: 0, done: 0, revenue: 0, scheduled: 0 };
         b.count++;
-        if (r.status === "done") { b.done++; b.revenue += total; }
+        if (r.status === "done") { b.done++; b.revenue += shares[id]; }
+        else b.scheduled += shares[id];
       });
     });
     s.totalRevenue = s.doneRevenue + s.scheduledRevenue;
@@ -325,7 +341,7 @@
     var names = {};
     (staff || []).forEach(function (p) { names[p.id] = p.name; });
     var head = ["예약일자", "요일", "시작", "종료", "소요시간", "상태", "고객명", "전화번호", "주소(출발지)", "도착지 주소",
-      "기기", "모델명", "작업", "대수", "금액", "결제방법", "입금", "참여직원", "층수", "엘리베이터", "주차", "메모", "사진(전/후)"];
+      "기기", "모델명", "작업", "대수", "금액", "결제방법", "입금", "참여직원", "1인당 금액", "층수", "엘리베이터", "주차", "메모", "사진(전/후)"];
     var rows = [head];
     sortReservations(list).forEach(function (r) {
       var c = r.customer || {}, site = r.site || {}, p = r.payment || {};
@@ -336,6 +352,7 @@
         itemsSummary(r.items), modelsSummary(r.items), worksSummary(r.items), unitCount(r.items),
         parseWon(r.total), p.method || "미정", p.paid ? "입금완료" : "미입금",
         assignedWorkers(r).map(function (id) { return names[id]; }).filter(Boolean).join(" "),
+        (function () { var sh = sharesOf(r), k = Object.keys(sh); return k.length ? Math.floor(parseWon(r.total) / k.length) : ""; })(),
         site.floor || "", site.elevator || "", site.parking || "",
         [site.memo, r.note].filter(Boolean).join(" / "),
         (function () { var pc = photoCounts(r); return pc.total ? pc.before + "/" + pc.after : ""; })()
@@ -424,7 +441,7 @@
   }
 
   return {
-    NAV_APPS: NAV_APPS, detectPlatform: detectPlatform, navLinks: navLinks,
+    NAV_APPS: NAV_APPS, detectPlatform: detectPlatform, navLinks: navLinks, splitShares: splitShares, sharesOf: sharesOf,
     TYPES: TYPES, WORKS: WORKS, PAY_METHODS: PAY_METHODS, STATUS: STATUS, WEEKDAYS: WEEKDAYS,
     STAGES: STAGES, LOG_LABEL: LOG_LABEL, stageOf: stageOf, nextStatus: nextStatus, statusLog: statusLog,
     pad: pad, toMin: toMin, endTime: endTime, durationLabel: durationLabel,
