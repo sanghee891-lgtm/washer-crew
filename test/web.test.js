@@ -63,6 +63,7 @@ function ok(v, msg) { if (!v) throw new Error(msg || "조건 불충족"); }
 function pad(n) { return (n < 10 ? "0" : "") + n; }
 function dstr(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
 const TODAY = dstr(new Date());
+const addDaysT = (d, n) => { const x = new Date(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10) + n); return dstr(x); };
 const TOMORROW = dstr(new Date(Date.now() + 86400000));
 
 const STAFF = { list: [{ id: "smvivcjg00", name: "김영우" }, { id: "smvivcjg01", name: "박상연" }, { id: "smvivcjg03", name: "신창민" }] };
@@ -203,6 +204,34 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     await p.waitForFunction(() => document.querySelector("#meName").textContent === "신창민님");
     await p.waitForSelector("[data-testid=card]");
     ok(!(await p.isVisible("#modal")), "이름 고르기 창 없음");
+  });
+  await step("첫 화면은 달력: 오늘 날짜가 골라져 있고 아래에 오늘 예약, 탭은 달력이 맨 앞", async () => {
+    await p.reload();
+    await p.waitForSelector(".cal");
+    eq(await p.getAttribute("[data-testid=tab-cal]", "aria-current"), "page");
+    eq(await p.locator(".tab").first().getAttribute("data-tab"), "cal");
+    ok(await p.locator(`[data-testid=day-${TODAY}].sel`).count() === 1, "오늘 선택");
+  });
+  await step("예약목록: 오늘과 가까운 날부터, 지난 예약은 아래에 최근 순", async () => {
+    await p.evaluate(async (d) => {
+      const db = await window.claude.use("db");
+      for (const [id, date] of [["r_o1", d.y2], ["r_o2", d.y1], ["r_o3", d.t1]]) await db.doc("reservations/" + id).set({ date, time: "09:00", durationMin: 60, status: "scheduled", customer: { name: "정렬" + id }, items: [], total: 0, workers: {}, createdBy: "smvivcjg03", createdAt: "2026-01-01T00:00:00Z" });
+    }, { y1: addDaysT(TODAY, -1), y2: addDaysT(TODAY, -2), t1: addDaysT(TODAY, 1) });
+    await p.click("[data-testid=tab-list]");
+    await p.click("[data-testid=filter-all]").catch(() => {});
+    await p.waitForSelector("section.day");
+    await p.waitForTimeout(300);
+    const order = await p.evaluate(() => [...document.querySelectorAll("section.day")].map((s) => s.dataset.date));
+    const exp = [...new Set(order)].slice().sort((a, b) => {
+      const fa = a >= TODAY, fb = b >= TODAY;
+      if (fa !== fb) return fa ? -1 : 1;
+      return fa ? (a < b ? -1 : 1) : (a < b ? 1 : -1);
+    });
+    eq(order, exp, "가까운 날 순");
+    ok(order.indexOf(TODAY) <= 0 || order[0] >= TODAY, "맨 위는 오늘 이후");
+    if (order.some((d) => d < TODAY)) ok(await p.isVisible("[data-testid=past-divider]"), "지난 예약 구분");
+    await p.evaluate(() => { const d = JSON.parse(localStorage.getItem("fakesb")); for (const id of ["r_o1", "r_o2", "r_o3"]) delete d.docs["reservations/" + id]; localStorage.setItem("fakesb", JSON.stringify(d)); });
+    await p.reload(); await p.waitForSelector(".cal");
   });
   await step("새로고침해도 로그인 유지", async () => {
     await p.reload();
@@ -409,6 +438,7 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     await p2.waitForSelector("[data-testid=tile-today]");
     for (const k of ["today", "mine", "open"]) ok(await p2.isVisible(`[data-testid=tile-${k}]`), "칸 " + k);
     eq(await p2.locator("[data-testid=tile-revenue]").count(), 0, "직원에겐 매출 칸 없음");
+    await p2.click("[data-testid=tab-list]");
     eq((await p2.locator("#filters .chip").first().innerText()).replace(/\s+\d+$/, ""), "오늘");
   });
   await step("다른 직원: 남이 넣은 예약은 보기만, 직원 명단은 사장님만", async () => {
@@ -533,7 +563,7 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     await kp.waitForSelector("#modal", { state: "hidden" });
     eq((await fakeDb(kp)).accounts.find((a) => a.uid === "u-kim").pin, "246810");
     await kp.reload();
-    await kp.waitForSelector("[data-testid=card], [data-testid=empty]");
+    await kp.waitForSelector("[data-testid=card], [data-testid=empty], .cal");
     await kp.waitForTimeout(300);
     ok(!(await kp.isVisible("[data-testid=pin-input]")), "다시 안 뜸");
   });
@@ -541,7 +571,7 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     await kp.evaluate(() => { const d = JSON.parse(localStorage.getItem("fakesb")); d.accounts.find((a) => a.uid === "u-shin").pin = "000000"; localStorage.setItem("fakesb", JSON.stringify(d)); sessionStorage.removeItem("fakesb.session"); });
     await kp.reload();
     await login(kp, "신창민", "000000");
-    await kp.waitForSelector("[data-testid=card], [data-testid=empty]");
+    await kp.waitForSelector("[data-testid=card], [data-testid=empty], .cal");
     await kp.waitForTimeout(300);
     ok(!(await kp.isVisible("[data-testid=pin-input]")), "사장님은 안내 없음");
   });
@@ -869,11 +899,11 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
         } catch (e) { /* 무시 */ }
       };
       const { c, ip } = await open(UA.kakao, "u-shin", twaRef);
-      await ip.waitForSelector("[data-testid=card], [data-testid=empty]");
+      await ip.waitForSelector("[data-testid=card], [data-testid=empty], .cal");
       eq(await ip.locator("[data-testid=inapp-box]").count(), 0, "카톡 안내 없음");
       eq(await ip.locator("[data-testid=install-btn]").count(), 0, "설치 안내 없음");
       await ip.reload();
-      await ip.waitForSelector("[data-testid=card], [data-testid=empty]");
+      await ip.waitForSelector("[data-testid=card], [data-testid=empty], .cal");
       eq(await ip.locator("[data-testid=install-btn]").count(), 0, "새로고침해도 앱으로 인식");
       await c.close();
     });
@@ -883,7 +913,7 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
         window.matchMedia = (q) => (/display-mode: standalone/.test(q) ? { matches: true, media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} } : orig(q));
       };
       const { c, ip } = await open(UA.chrome, "u-shin", standaloneMq);
-      await ip.waitForSelector("[data-testid=card], [data-testid=empty]");
+      await ip.waitForSelector("[data-testid=card], [data-testid=empty], .cal");
       eq(await ip.locator("[data-testid=install-btn]").count(), 0);
       await ip.click("[data-testid=tab-settings]");
       ok((await ip.innerText("[data-testid=install-panel]")).includes("홈 화면 앱으로 열었어요"));

@@ -243,6 +243,15 @@ t("Android: intent 링크(패키지, 대체 주소 없음)", () => {
   assert.ok(l.apps.every(a => !a.href.includes("browser_fallback_url")), "앱이 없으면 플레이스토어(장부 화면은 그대로)");
   assert.ok(!/[ ,]/.test(by.tmap.href.split("#")[0]), "주소가 인코딩되지 않음");
 });
+t("가까운 날 순: 오늘·다가오는 예약 먼저, 지난 예약은 최근 것부터", () => {
+  const L = [
+    { id: "a", date: "2026-11-01", time: "10:00" }, { id: "b", date: "2026-11-08", time: "09:00" },
+    { id: "c", date: "2026-11-09", time: "15:00" }, { id: "d", date: "2026-11-09", time: "08:00" },
+    { id: "e", date: "2026-11-20", time: "10:00" }, { id: "f", date: "2026-11-10", time: "10:00" },
+    { id: "g", date: "2026-11-08", time: "13:00" }
+  ];
+  assert.deepStrictEqual(C.sortNearest(L, "2026-11-09").map(r => r.id), ["d", "c", "f", "e", "b", "g", "a"]);
+});
 t("PC: 앱 버튼 없이 웹 지도만", () => {
   const l = C.navLinks(ADDR, "other");
   assert.strictEqual(l.apps.length, 0);

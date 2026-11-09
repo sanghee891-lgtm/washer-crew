@@ -305,6 +305,16 @@
     });
   }
 
+  // 오늘과 가까운 날부터: 오늘·다가오는 예약(가까운 날 먼저) → 지난 예약(최근 것 먼저). 같은 날은 시간 순
+  function sortNearest(list, today) {
+    var up = [], past = [];
+    sortReservations(list).forEach(function (r) { (r.date >= today ? up : past).push(r); });
+    var byDay = {}, days = [];
+    past.forEach(function (r) { if (!byDay[r.date]) { byDay[r.date] = []; days.push(r.date); } byDay[r.date].push(r); });
+    days.reverse();
+    return up.concat([].concat.apply([], days.map(function (d) { return byDay[d]; })));
+  }
+
   function searchMatch(r, q) {
     q = String(q || "").trim().toLowerCase();
     if (!q) return true;
@@ -441,7 +451,7 @@
   }
 
   return {
-    NAV_APPS: NAV_APPS, detectPlatform: detectPlatform, navLinks: navLinks, splitShares: splitShares, sharesOf: sharesOf,
+    NAV_APPS: NAV_APPS, detectPlatform: detectPlatform, navLinks: navLinks, splitShares: splitShares, sharesOf: sharesOf, sortNearest: sortNearest,
     TYPES: TYPES, WORKS: WORKS, PAY_METHODS: PAY_METHODS, STATUS: STATUS, WEEKDAYS: WEEKDAYS,
     STAGES: STAGES, LOG_LABEL: LOG_LABEL, stageOf: stageOf, nextStatus: nextStatus, statusLog: statusLog,
     pad: pad, toMin: toMin, endTime: endTime, durationLabel: durationLabel,

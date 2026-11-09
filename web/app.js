@@ -10,7 +10,7 @@
     uid: null, myStaffId: null, fixedStaff: null, staff: [], staffLoaded: false,
     reqs: [], sent: {}, pushState: null, accounts: null,
     all: {}, loading: true, subYear: null, unsubYear: null,
-    ym: C.ymOf(C.todayStr()), tab: "list", filter: "all", q: "", calDay: null,
+    ym: C.ymOf(C.todayStr()), tab: "cal", filter: "all", q: "", calDay: null,
     readOnly: false, conn: "connecting", // connecting | ok | nodb
     renderedTab: null, wide: false, statsTable: false
   };
@@ -96,8 +96,9 @@
   // 창(사진 크게 보기 > 사진·주소 창 > 입력 화면 > 다른 탭)이 열려 있는 동안 기록을 하나 두어
   // 휴대폰 뒤로가기가 장부를 벗어나지 않고 맨 위 창부터 닫게 함
   var NAV = { depth: 0, ignore: 0, releaseTimer: null };
+  var HOME = "cal"; // 첫 화면: 달력(오늘 예약이 아래에 나옴)
   function anyOpen() {
-    return !$("#modal").hidden || !$("#sheet").hidden || S.tab !== "list";
+    return !$("#modal").hidden || !$("#sheet").hidden || S.tab !== HOME;
   }
   // 창을 열 때(누를 때) 기록 한 칸 추가
   function pushLayer() {
@@ -119,7 +120,7 @@
     if (P && P.view && !$("#modal").hidden) { P.view = null; P.confirmDel = false; renderPhotos(); }
     else if (!$("#modal").hidden) closeModal();
     else if (!$("#sheet").hidden) closeForm();
-    else if (S.tab !== "list") setTab("list");
+    else if (S.tab !== HOME) setTab(HOME);
   }
   window.addEventListener("popstate", function () {
     if (NAV.ignore) { NAV.ignore--; return; }
@@ -153,7 +154,7 @@
 
   // ---------------- 연결 ----------------
   async function boot() {
-    S.tab = "list"; // 항상 예약목록에서 시작(뒤로가기 순서가 단순해짐)
+    S.tab = HOME; // 항상 달력에서 시작(뒤로가기 순서가 단순해짐)
     S.myStaffId = store(meKey()) || null;
     // 표는 옆으로 밀지 않고 한 화면에 들어오는 넓은 화면(1100px~)에서만, 그보다 좁으면 카드
     var mq = window.matchMedia("(min-width: 1100px)");
@@ -712,7 +713,7 @@
         nl.slice(0, 5).map(function (r) { return '<button class="notice-row" data-open="' + esc(r.id) + '">' + esc(noteLine(r)) + "</button>"; }).join("") +
         (nl.length > 5 ? '<div class="muted" style="font-size:13px">외 ' + (nl.length - 5) + "건</div>" : "") + "</div>";
     }
-    if (S.conn === "ok" && S.tab === "list") nt += installNoticeHtml() + reqNoticeHtml() + remindNoticeHtml() + pushNoticeHtml();
+    if (S.conn === "ok" && (S.tab === "list" || S.tab === HOME)) nt += installNoticeHtml() + reqNoticeHtml() + remindNoticeHtml() + pushNoticeHtml();
     // 알림 여러 개는 카드 하나에 줄로 묶어 보여 줌
     if (nt) msg += '<div class="notice-list">' + nt + "</div>";
     if (S.conn === "nodb") msg += '<div class="banner">공유 장부에 연결되지 않았어요. 인터넷 연결을 확인하고 화면을 새로고침해 주세요.</div>';
@@ -731,8 +732,8 @@
   // ---- 예약 목록 ----
   function filtered() {
     var me = S.myStaffId, today = C.todayStr();
-    var src = S.q.trim() ? C.sortReservations(list()) : monthList();
-    return src.filter(function (r) {
+    var src = S.q.trim() ? list() : C.filterMonth(list(), S.ym);
+    return C.sortNearest(src, today).filter(function (r) {
       if (!C.searchMatch(r, S.q)) return false;
       if (S.filter === "today") return r.date === today;
       if (S.filter === "mine") return me && r.workers && r.workers[me] === true && r.status !== "canceled";
@@ -777,10 +778,13 @@
       if (!cur || cur.date !== r.date) { cur = { date: r.date, rows: [] }; groups.push(cur); }
       cur.rows.push(r);
     });
+    var pastShown = false;
     return groups.map(function (g) {
       var s = C.summarize(g.rows);
+      var div = "";
+      if (g.date < today && !pastShown) { pastShown = true; div = '<div class="section-title" data-testid="past-divider">지난 예약 (최근 순)</div>'; }
       var wd = C.weekdayOf(g.date);
-      return '<section class="day" data-date="' + g.date + '"><div class="day-h"><span class="d' + (wd === 0 ? " sun" : "") + '">' + C.dayLabel(g.date) + "</span>" +
+      return div + '<section class="day" data-date="' + g.date + '"><div class="day-h"><span class="d' + (wd === 0 ? " sun" : "") + '">' + C.dayLabel(g.date) + "</span>" +
         (g.date === today ? '<span class="tag">오늘</span>' : "") +
         '<span class="meta num">' + s.count + "건 · " + C.formatWon(s.totalRevenue) + "원</span></div>" +
         '<div class="cards">' + g.rows.map(function (r) { return cardHtml(r, conflicts[r.id]); }).join("") + "</div></section>";
@@ -1257,12 +1261,12 @@
 
   // ---------------- 이벤트 ----------------
   function setTab(t) {
-    var wasList = S.tab === "list";
+    var wasHome = S.tab === HOME;
     S.tab = t;
     if (t === "settings") staffDraft = null;
     render();
     window.scrollTo(0, 0);
-    if (t !== "list" && wasList) pushLayer(); else if (t === "list") releaseGuardSoon();
+    if (t !== HOME && wasHome) pushLayer(); else if (t === HOME) releaseGuardSoon();
   }
   function setMonth(ym) {
     S.ym = ym;
