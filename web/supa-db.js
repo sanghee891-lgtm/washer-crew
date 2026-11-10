@@ -630,7 +630,7 @@
       if (s === BOOK.last) return;
       BOOK.last = s;
       var list = r.data.map(function (b) {
-        return { id: b.id, createdAt: b.created_at, name: b.name, phone: b.phone, address: b.address, moveTo: b.move_to, date: b.want_date, timeSlot: b.time_slot, items: b.items || [], note: b.note };
+        return { id: b.id, createdAt: b.created_at, name: b.name, phone: b.phone, address: b.address, moveTo: b.move_to, date: b.want_date, timeSlot: b.time_slot, items: b.items || [], note: b.note, photo: b.photo || "" };
       });
       BOOK.subs.forEach(function (f) { f(list); });
     }

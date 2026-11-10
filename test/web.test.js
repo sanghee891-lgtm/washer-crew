@@ -11,6 +11,8 @@ const mockSupabase = require("./mock-supabase.js");
 const ROOT = path.join(__dirname, "..", "web");
 const blobs = new Map();
 const booked = [];
+const photoUploads = new Set(); // 고객이 예약 페이지에서 올린 사진 id
+const tinyJpeg = Buffer.from("/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=", "base64");
 const TYPES = { ".js": "text/javascript; charset=utf-8", ".html": "text/html; charset=utf-8", ".webp": "image/webp", ".png": "image/png", ".webmanifest": "application/manifest+json" };
 const server = http.createServer((req, res) => {
   const u = req.url.split("?")[0];
@@ -19,12 +21,27 @@ const server = http.createServer((req, res) => {
     return res.end('window.WC_CONFIG = { url: "", key: "test-key", vapidPublic: "BN-veQ_r2zno2rW8Zj3r32mDfxiS_3uIagUmGDtKudBtCRLPuDUFrbEf-g4k-GaWBCe5QVKyv026MBKwUfqQQeY", emailDomain: "washer-crew.local" };');
   }
   if (u === "/vendor/supabase.js") { res.writeHead(200, { "content-type": TYPES[".js"] }); return res.end("/* 테스트: 가짜 Supabase 사용 */"); }
+  if (u === "/functions/v1/booking-photo" && req.method === "POST") {
+    const chunks = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => {
+      const buf = Buffer.concat(chunks);
+      if (!buf.length || buf[0] !== 0xff || buf[1] !== 0xd8) { res.writeHead(415, { "content-type": "application/json" }); return res.end('{"error":"not_image"}'); }
+      const id = require("crypto").randomBytes(16).toString("hex");
+      photoUploads.add(id);
+      blobs.set(id, { type: "image/jpeg", buf });
+      res.writeHead(200, { "content-type": "application/json", "access-control-allow-origin": "*" });
+      res.end(JSON.stringify({ id }));
+    });
+    return;
+  }
   if (u === "/rest/v1/rpc/submit_booking" && req.method === "POST") {
     let b = "";
     req.on("data", (c) => (b += c));
     req.on("end", () => {
       const p = JSON.parse(b).p;
       if (req.headers.apikey !== "test-key") { res.writeHead(401); return res.end("{}"); }
+      if (!photoUploads.has(p.photo)) { res.writeHead(400, { "content-type": "application/json" }); return res.end(JSON.stringify({ code: "22023", message: "photo" })); }
       if (booked.some((x) => x.phone === p.phone)) { res.writeHead(400, { "content-type": "application/json" }); return res.end(JSON.stringify({ code: "22023", message: "too_many" })); }
       booked.push(p);
       res.writeHead(200, { "content-type": "application/json" });
@@ -63,6 +80,8 @@ function ok(v, msg) { if (!v) throw new Error(msg || "조건 불충족"); }
 function pad(n) { return (n < 10 ? "0" : "") + n; }
 function dstr(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
 const TODAY = dstr(new Date());
+const REQ_PHOTO = "c0ffee00c0ffee00c0ffee00c0ffee00";
+blobs.set(REQ_PHOTO, { type: "image/jpeg", buf: tinyJpeg });
 const addDaysT = (d, n) => { const x = new Date(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10) + n); return dstr(x); };
 const TOMORROW = dstr(new Date(Date.now() + 86400000));
 
@@ -179,8 +198,9 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
       ["reservations/r_tmr"]: { date: TOMORROW, time: "10:00", durationMin: 120, status: "scheduled", customer: { name: "김민지", phone: "010-1234-5678", address: "수원" }, items: [{ type: "건조기", qty: 1, work: "이전설치" }], total: 150000, payment: { method: "미정", paid: false }, workers: {}, createdBy: "smvivcjg00", createdAt: "2026-01-01T00:00:00Z" },
       ["reservations/r_kim"]: { date: TODAY, time: "15:00", durationMin: 60, status: "scheduled", customer: { name: "남의고객", phone: "", address: "서울" }, items: [{ type: "통돌이", qty: 1, work: "세척" }], total: 50000, payment: { method: "미정", paid: false }, workers: {}, createdBy: "smvivcjg00", createdAt: "2026-01-01T00:00:00Z" }
     },
+    files: { [REQ_PHOTO]: { owner: null, size: tinyJpeg.length } },
     bookings: [
-      { id: "b1", created_at: new Date().toISOString(), status: "new", name: "이고객", phone: "010-5555-6666", phone_digits: "01055556666", address: "용인시 기흥구 1", move_to: "수원시 영통구 2", want_date: TOMORROW, time_slot: "오후", items: [{ type: "건조기", qty: 1, work: "이전설치" }], note: "엘리베이터 있음" },
+      { id: "b1", created_at: new Date().toISOString(), status: "new", name: "이고객", phone: "010-5555-6666", phone_digits: "01055556666", address: "용인시 기흥구 1", move_to: "수원시 영통구 2", want_date: TOMORROW, time_slot: "오후", items: [{ type: "건조기", qty: 1, work: "이전설치" }], note: "엘리베이터 있음", photo: REQ_PHOTO },
       { id: "b2", created_at: new Date().toISOString(), status: "new", name: "스팸", phone: "010-0000-0000", phone_digits: "01000000000", address: "x", move_to: "", want_date: TOMORROW, time_slot: "", items: [], note: "" }
     ]
   };
@@ -248,6 +268,8 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
   await step("[확정] → 입력 화면이 채워져 열림 → 저장하면 예약 생성·요청 처리", async () => {
     await p.click("[data-testid=open-reqs]");
     await p.waitForSelector("[data-testid=req-card]");
+    await p.waitForSelector("[data-testid=req-card] [data-testid=req-photo] img[src*='token=']");
+    eq(await p.locator("[data-testid=req-photo]").count(), 1, "사진 있는 요청만 사진 표시");
     await p.locator("[data-testid=req-card]", { hasText: "이고객" }).locator("[data-testid=req-accept]").click();
     await p.waitForSelector("#sheet:not([hidden]) [data-testid=f-name]");
     eq(await p.inputValue("[data-testid=f-name]"), "이고객");
@@ -266,6 +288,7 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     const b1 = d.bookings[0];
     const res = d.docs["reservations/" + b1.reservation_id];
     ok(res && res.customer.name === "이고객" && res.createdBy === "smvivcjg03" && res.total === 180000, JSON.stringify(res));
+    eq(res.photos && res.photos[REQ_PHOTO] && res.photos[REQ_PHOTO].kind, "before", "고객 사진은 작업 전 사진으로");
     eq(b1.handled_by, "smvivcjg03");
     await p.waitForFunction(() => document.querySelector("[data-testid=req-notice]").innerText.includes("1건"));
   });
@@ -419,7 +442,6 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
 
   // ---------------- 6. 사진(비공개 보관함) ----------------
   console.log("사진");
-  const tinyJpeg = Buffer.from("/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=", "base64");
   await step("사진 올리기 → 서명된 주소로 표시", async () => {
     await p.click("[data-testid=tab-list]");
     await p.waitForSelector("[data-testid=card]");
@@ -427,7 +449,7 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     await p.setInputFiles("[data-testid=file-before]", { name: "a.jpg", mimeType: "image/jpeg", buffer: tinyJpeg });
     await p.waitForSelector("[data-testid=grid-before] .ph img[data-blob][src*='token=']");
     const d = await fakeDb(p);
-    const ids = Object.keys(d.files);
+    const ids = Object.keys(d.files).filter((k) => k !== REQ_PHOTO); // 고객 요청 사진은 빼고
     eq(ids.length, 1);
     eq(d.files[ids[0]].owner, "u-shin");
     ok(d.docs["reservations/r_tmr"].photos[ids[0]].by === "smvivcjg03");
@@ -486,7 +508,7 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     await p2.click("[data-testid=photo-del]");
     await p2.click("[data-testid=photo-del-yes]");
     await p2.waitForFunction(() => document.querySelector("#toast").textContent.includes("올린 사람이나 사장님만"));
-    eq(Object.keys((await fakeDb(p2)).files).length, 3, "사장님 사진 3장 그대로");
+    eq(Object.keys((await fakeDb(p2)).files).filter((k) => k !== REQ_PHOTO).length, 3, "사장님 사진 3장 그대로");
   });
   await step("다른 직원 화면에 새 예약 실시간 반영(같은 기기 다른 탭)", async () => {
     const t2 = await webPage(p2.context(), { session: "u-park", label: "park2", path: "" });
@@ -515,6 +537,7 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
   await step("빈 칸·기기 미선택·동의 없음이면 안내만", async () => {
     await bp.click("[data-testid=b-send]");
     ok(await bp.isVisible("#e-items"), "기기");
+    ok((await bp.innerText("#e-photo")).includes("세탁기 앞면 사진"), "사진 필수");
     ok(await bp.isVisible("#e-name"), "이름");
     ok(await bp.isVisible("#e-form"), "동의");
     eq(booked.length, 0);
@@ -543,8 +566,12 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     await bp.fill("[data-testid=b-addr2]", "도착 주소");
     await bp.fill("[data-testid=b-note]", "3층");
     await bp.check("[data-testid=b-agree]");
+    await bp.setInputFiles("[data-testid=b-photo]", { name: "w.jpg", mimeType: "image/jpeg", buffer: tinyJpeg });
+    await bp.waitForSelector("#phPrev:not([hidden])");
     await bp.click("[data-testid=b-send]");
     await bp.waitForSelector("[data-testid=b-done]");
+    ok(photoUploads.has(booked[0].photo), "올린 사진 id 를 함께 보냄");
+    delete booked[0].photo;
     eq(booked[0], { name: "최고객", phone: "010-7777-8888", address: "출발 주소", moveTo: "도착 주소", date: TOMORROW, timeSlot: "14:30",
       items: [{ type: "건조기", qty: 1, work: "이전설치" }, { type: "LG 2단", qty: 2, work: "이전설치" }], note: "3층", website: "" });
   });
@@ -556,6 +583,7 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     await bp.fill("[data-testid=b-phone]", "010-7777-8888");
     await bp.fill("[data-testid=b-addr]", "주소");
     await bp.check("[data-testid=b-agree]");
+    await bp.setInputFiles("[data-testid=b-photo-cam]", { name: "w.jpg", mimeType: "image/jpeg", buffer: tinyJpeg });
     await bp.click("[data-testid=b-send]");
     await bp.waitForFunction(() => !document.querySelector("#e-form").hidden && document.querySelector("#e-form").textContent.includes("1분 뒤"));
   });

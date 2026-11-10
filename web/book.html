@@ -48,6 +48,7 @@ form { display: grid; gap: 14px; }
 .card h2 { margin: 0; font-size: 17px; }
 label, .lab { display: block; font-weight: 700; font-size: 15px; margin-bottom: 6px; }
 .req::after { content: " *"; color: var(--bad); }
+.req-mark { color: var(--bad); font-size: 14px; }
 .inp { width: 100%; height: 48px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 0 12px; }
 textarea.inp { height: 96px; padding: 10px 12px; resize: vertical; }
 .chips { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -55,6 +56,11 @@ textarea.inp { height: 96px; padding: 10px 12px; resize: vertical; }
 .slot-chips .chip { min-height: 40px; padding: 0 12px; font-size: 15px; }
 .chip { min-height: 44px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); font-weight: 700; }
 /* 기기: 첫 줄 통돌이·삼성 2단·LG 2단·빌트인, 둘째 줄 건조기·세탁기 */
+.ph-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.ph-pick label { min-height: 52px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); display: flex; align-items: center; justify-content: center; font-weight: 700; cursor: pointer; }
+.ph-pick input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.ph-prev { position: relative; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); background: var(--surface-2, #eef2f8); }
+.ph-prev img { display: block; width: 100%; max-height: 320px; object-fit: contain; }
 .type-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .type-grid .chip { padding: 0 4px; font-size: 15px; white-space: nowrap; }
 .chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
@@ -90,6 +96,17 @@ textarea.inp { height: 96px; padding: 10px 12px; resize: vertical; }
         <div id="qtys"></div><div class="err" id="e-items" hidden></div></div>
     </div>
 
+    <div class="card" id="photoCard">
+      <h2>세탁기 사진 <span class="req-mark">(필수)</span></h2>
+      <p class="muted" style="margin:0">세탁기(건조기) <b>앞면 전체</b>가 보이게 1장 찍어 주세요. 모델 확인에 써요.</p>
+      <div class="ph-prev" id="phPrev" hidden><img id="phImg" alt="고른 세탁기 사진" data-testid="b-photo-preview"></div>
+      <div class="ph-pick">
+        <label><input type="file" accept="image/*" capture="environment" id="phCam" data-testid="b-photo-cam">카메라로 찍기</label>
+        <label><input type="file" accept="image/*" id="phFile" data-testid="b-photo">앨범에서 고르기</label>
+      </div>
+      <div class="err" id="e-photo" hidden></div>
+    </div>
+
     <div class="card">
       <h2>언제가 좋으세요?</h2>
       <div><label class="req" for="date">희망 날짜</label><input class="inp" type="date" id="date" data-testid="b-date"><div class="err" id="e-date" hidden></div></div>
@@ -109,7 +126,7 @@ textarea.inp { height: 96px; padding: 10px 12px; resize: vertical; }
       <div class="hp" aria-hidden="true"><label for="website">웹사이트</label><input id="website" tabindex="-1" autocomplete="off"></div>
     </div>
 
-    <label class="agree"><input type="checkbox" id="agree" data-testid="b-agree"><span>[필수] 예약 확인 연락을 위해 고객님의 이름, 연락처, 주소를 받습니다. 작업이 끝난 뒤 5년간 보관하고 삭제됩니다.</span></label>
+    <label class="agree"><input type="checkbox" id="agree" data-testid="b-agree"><span>[필수] 예약 확인 연락을 위해 고객님의 이름, 연락처, 주소와 세탁기 사진을 받습니다. 작업이 끝난 뒤 5년간 보관하고 삭제됩니다.</span></label>
     <p class="muted privacy-link"><a href="privacy.html" target="_blank" rel="noopener" data-testid="b-privacy">개인정보 처리 안내 보기</a> (보관 기간 · 삭제 요청 방법)</p>
     <div class="err" id="e-form" hidden></div>
     <button class="submit" id="send" type="submit" data-testid="b-send">예약 요청 보내기</button>
@@ -173,15 +190,58 @@ textarea.inp { height: 96px; padding: 10px 12px; resize: vertical; }
   $("#phone").addEventListener("blur", function () { this.value = C.formatPhone(this.value); });
   $("#time").addEventListener("input", render);
 
+  // ---- 세탁기 사진(필수): 긴 변 1280px JPEG로 줄여서 올림 ----
+  function loadImg(file) {
+    if (window.createImageBitmap) return createImageBitmap(file, { imageOrientation: "from-image" }).catch(function () { return createImageBitmap(file); });
+    return new Promise(function (res, rej) {
+      var u = URL.createObjectURL(file), im = new Image();
+      im.onload = function () { URL.revokeObjectURL(u); res(im); }; im.onerror = function () { URL.revokeObjectURL(u); rej(new Error("decode")); };
+      im.src = u;
+    });
+  }
+  async function shrink(file) {
+    try {
+      var im = await loadImg(file), w0 = im.width || im.naturalWidth, h0 = im.height || im.naturalHeight;
+      var sc = Math.min(1, 1280 / Math.max(w0, h0)), cv = document.createElement("canvas");
+      cv.width = Math.max(1, Math.round(w0 * sc)); cv.height = Math.max(1, Math.round(h0 * sc));
+      cv.getContext("2d").drawImage(im, 0, 0, cv.width, cv.height);
+      var b = await new Promise(function (res) { cv.toBlob(res, "image/jpeg", 0.85); });
+      if (b && b.size) return b;
+    } catch (e) { /* 줄이지 못하면 원본 */ }
+    return file;
+  }
+  function onPhoto(e) {
+    var f = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    if (!/^image\//.test(f.type || "image/")) { showErr("photo", "사진 파일을 골라 주세요."); return; }
+    showErr("photo", "");
+    S.photo = f; S.photoId = null;
+    $("#phImg").src = URL.createObjectURL(f);
+    $("#phPrev").hidden = false;
+  }
+  $("#phCam").addEventListener("change", onPhoto);
+  $("#phFile").addEventListener("change", onPhoto);
+  async function uploadPhoto() {
+    if (S.photoId) return S.photoId;
+    var blob = await shrink(S.photo);
+    var r = await fetch(CFG.url + "/functions/v1/booking-photo", { method: "POST", headers: { apikey: CFG.key, "Content-Type": blob.type || "image/jpeg" }, body: blob });
+    var j = await r.json().catch(function () { return {}; });
+    if (!r.ok || !j.id) throw new Error(j.error || "upload");
+    S.photoId = j.id;
+    return j.id;
+  }
+
   function showErr(k, msg) { var el = $("#e-" + k); if (!el) return; el.textContent = msg || ""; el.hidden = !msg; }
   var MSG = {
     name: "이름을 넣어 주세요.", phone: "연락처를 다시 확인해 주세요.", address: "주소를 넣어 주세요.",
     date: "오늘부터 6개월 안의 날짜를 골라 주세요.", time: "오전 8시부터 오후 8시 사이로 골라 주세요.", too_many: "방금 요청을 보냈어요. 1분 뒤에 다시 보내 주세요.",
-    busy: "요청이 많아요. 잠시 뒤 다시 보내 주세요."
+    busy: "요청이 많아요. 잠시 뒤 다시 보내 주세요.",
+    photo: "세탁기 앞면 사진을 1장 올려 주세요."
   };
   $("#f").addEventListener("submit", async function (e) {
     e.preventDefault();
-    ["name", "phone", "address", "date", "time", "items", "form"].forEach(function (k) { showErr(k, ""); });
+    ["name", "phone", "address", "date", "time", "items", "photo", "form"].forEach(function (k) { showErr(k, ""); });
     var body = {
       name: $("#name").value.trim(), phone: C.formatPhone($("#phone").value.trim()), address: $("#addr").value.trim(),
       moveTo: S.work === "이전설치" ? $("#addr2").value.trim() : "", date: $("#date").value,
@@ -191,6 +251,7 @@ textarea.inp { height: 96px; padding: 10px 12px; resize: vertical; }
     };
     var bad = null;
     if (!body.items.length) { showErr("items", "기기를 하나 이상 골라 주세요."); bad = bad || "#types"; }
+    if (!S.photo) { showErr("photo", MSG.photo); bad = bad || "#photoCard"; }
     if (!body.date || body.date < today) { showErr("date", MSG.date); bad = bad || "#date"; }
     if (body.timeSlot && (body.timeSlot < "08:00" || body.timeSlot > "20:00")) { showErr("time", MSG.time); bad = bad || "#time"; }
     if (!body.name) { showErr("name", MSG.name); bad = bad || "#name"; }
@@ -200,6 +261,13 @@ textarea.inp { height: 96px; padding: 10px 12px; resize: vertical; }
     if (bad) { $(bad).scrollIntoView({ block: "center" }); return; }
     $("#send").disabled = true; $("#send").textContent = "보내는 중…";
     try {
+      $("#send").textContent = "사진 올리는 중…";
+      try { body.photo = await uploadPhoto(); } catch (pe) {
+        showErr("photo", /too_many/.test(pe.message) ? "사진을 너무 많이 올렸어요. 잠시 뒤 다시 해 주세요." : /too_large|not_image/.test(pe.message) ? "이 사진은 올릴 수 없어요. 다른 사진을 골라 주세요." : "사진을 올리지 못했어요. 인터넷 연결을 확인하고 다시 눌러 주세요.");
+        $("#photoCard").scrollIntoView({ block: "center" });
+        return;
+      }
+      $("#send").textContent = "보내는 중…";
       var r = await fetch(CFG.url + "/rest/v1/rpc/submit_booking", {
         method: "POST",
         headers: { "Content-Type": "application/json", apikey: CFG.key },
@@ -208,7 +276,8 @@ textarea.inp { height: 96px; padding: 10px 12px; resize: vertical; }
       if (!r.ok) {
         var j = await r.json().catch(function () { return {}; });
         var code = j && j.message;
-        if (code === "name" || code === "phone" || code === "address" || code === "date" || code === "time") { showErr(code, MSG[code]); }
+        if (code === "photo") { S.photoId = null; showErr("photo", MSG.photo); }
+        else if (code === "name" || code === "phone" || code === "address" || code === "date" || code === "time") { showErr(code, MSG[code]); }
         else showErr("form", MSG[code] || "보내지 못했어요. 인터넷 연결을 확인하고 다시 눌러 주세요.");
         return;
       }

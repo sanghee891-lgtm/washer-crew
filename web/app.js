@@ -388,6 +388,7 @@
         "<div>" + (q.moveTo ? '<em class="tag-from">출발</em> ' : "") + esc(q.address) + "</div>" +
         (q.moveTo ? '<div><em class="tag-to">도착</em> ' + esc(q.moveTo) + "</div>" : "") +
         (q.note ? '<div class="req-note">' + esc(q.note) + "</div>" : "") +
+        (q.photo ? '<a class="req-photo" href="#" data-rqphoto="' + esc(q.photo) + '" data-testid="req-photo"><img' + blobAttr(q.photo) + ' alt="고객이 올린 세탁기 사진"><span>고객 사진 · 눌러서 크게</span></a>' : "") +
         '<div class="muted" style="font-size:12px">' + esc(fmtStamp(q.createdAt)) + " 접수</div>" +
         '<div class="req-acts">' + (REQ.confirmRej === q.id
           ? '<span class="grow">거절할까요?</span><button class="btn" data-rqno>아니요</button><button class="btn danger solid" data-rqrejyes data-testid="req-reject-yes">거절</button>'
@@ -398,10 +399,18 @@
     var m = $("#modal"), scroll = !m.hidden && m.firstChild ? m.firstChild.scrollTop : 0;
     openModal(html, onReqClick);
     m.firstChild.scrollTop = scroll;
+    fillBlobs(m);
   }
   function onReqClick(e) {
     var t = e.target, card = t.closest("[data-rq]"), id = card && card.getAttribute("data-rq");
     if (t.closest("[data-rqclose]")) { closeModal(); return; }
+    var rp = t.closest("[data-rqphoto]");
+    if (rp) {
+      e.preventDefault();
+      var img = rp.querySelector("img");
+      if (img && img.src) window.open(img.src, "_blank", "noopener");
+      return;
+    }
     if (t.closest("[data-rqrej]")) { REQ.confirmRej = id; renderRequests(); return; }
     if (t.closest("[data-rqno]")) { REQ.confirmRej = null; renderRequests(); return; }
     if (t.closest("[data-rqrejyes]")) {
@@ -426,6 +435,7 @@
       items: items.length ? items : undefined,
       note: ["고객 예약 요청", q.timeSlot ? "희망 시간: " + q.timeSlot : "", q.note].filter(Boolean).join("\n"),
       requestedAt: q.createdAt,
+      reqPhoto: q.photo || null,
       fromRequest: q.id
     };
   }
@@ -1555,7 +1565,7 @@
     if (id && !r) return;
     if (id) markSeen(id);
     var data = r ? clone(r) : blank(date);
-    if (prefill) Object.keys(prefill).forEach(function (k) { if (k !== "fromRequest" && k !== "requestedAt" && prefill[k] !== undefined) data[k] = clone({ v: prefill[k] }).v; });
+    if (prefill) Object.keys(prefill).forEach(function (k) { if (k !== "fromRequest" && k !== "requestedAt" && k !== "reqPhoto" && prefill[k] !== undefined) data[k] = clone({ v: prefill[k] }).v; });
     delete data.id;
     data.customer = Object.assign({ name: "", phone: "", address: "" }, data.customer);
     data.site = Object.assign({ floor: "", elevator: "", parking: "", memo: "" }, data.site);
@@ -1563,7 +1573,7 @@
     data.payment = Object.assign({ method: "미정", paid: false }, data.payment);
     data.workers = data.workers || {};
     if (!Array.isArray(data.items) || !data.items.length) data.items = [{ type: "통돌이", model: "", qty: 1, work: "세척" }];
-    F = { readOnly: !!(r && !canEditRes(r)), id: id, data: data, orig: r ? clone(r) : null, openedAt: r ? r.updatedAt || r.createdAt || "" : "", errors: {}, staleOk: false, confirmDel: false, hist: null, histFor: "", fromRequest: (prefill && prefill.fromRequest) || null, requestedAt: (prefill && prefill.requestedAt) || null };
+    F = { readOnly: !!(r && !canEditRes(r)), id: id, data: data, orig: r ? clone(r) : null, openedAt: r ? r.updatedAt || r.createdAt || "" : "", errors: {}, staleOk: false, confirmDel: false, hist: null, histFor: "", fromRequest: (prefill && prefill.fromRequest) || null, requestedAt: (prefill && prefill.requestedAt) || null, reqPhoto: (prefill && prefill.reqPhoto) || null };
     if (!id) F.newId = S.db.collection("reservations").doc().id; // 다시 눌러도 같은 예약 번호 → 중복 예약 안 생김
     var dr = loadDraft(id);
     if (dr && dr.data && (!r || dr.at > (r.updatedAt || r.createdAt || "")) && !F.readOnly) F.draft = dr;
@@ -2031,6 +2041,8 @@
         body.workers = w;
         body.createdBy = me;
         if (F.requestedAt) { body.log = {}; body.log["req_" + Date.now().toString(36)] = { s: "request", by: "", at: F.requestedAt }; }
+        // 고객이 올린 세탁기 사진은 '작업 전' 사진으로 붙임
+        if (F.reqPhoto) { body.photos = {}; body.photos[F.reqPhoto] = { kind: "before", by: "", at: F.requestedAt || nowIso(), customer: true }; }
         body.createdAt = body.updatedAt;
         var ref = S.db.doc("reservations/" + (F.id || F.newId));
         await ref.set(body);
