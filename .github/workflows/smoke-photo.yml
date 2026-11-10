@@ -1,0 +1,16 @@
+# 한 번만 쓰는 점검: 고객 사진 올리기 함수가 밖에서 잘 되는지(확인 후 지움)
+name: smoke-photo
+on: workflow_dispatch
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Upload tiny JPEG and reject non-image
+        env:
+          U: https://ncsxszunxdetpwqnkjhq.supabase.co/functions/v1/booking-photo
+          K: sb_publishable_erElCPGFiyJrxseaq9Do6g_ybW0FtLB
+        run: |
+          echo "/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=" | base64 -d > t.jpg
+          echo "jpeg: $(curl -s -w ' HTTP %{http_code}' -X POST "$U" -H "apikey: $K" -H 'Content-Type: image/jpeg' --data-binary @t.jpg)"
+          echo "text: $(curl -s -w ' HTTP %{http_code}' -X POST "$U" -H "apikey: $K" -H 'Content-Type: image/jpeg' --data-binary 'hello')"
+          echo "cors: $(curl -s -o /dev/null -w 'HTTP %{http_code}' -X OPTIONS "$U" -H 'Origin: https://washer-crew.pages.dev' -H 'Access-Control-Request-Method: POST')"
