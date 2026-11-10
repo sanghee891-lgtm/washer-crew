@@ -2179,7 +2179,7 @@
   function livePhotos(r, kind) { return C.photoList(r, kind).filter(function (p) { return !GONE[p.id]; }); }
   function openPhotos(id) {
     if (!S.all[id]) return;
-    P = { id: id, view: null, confirmDel: false };
+    P = { id: id, view: null, confirmDel: false, sel: null };
     renderPhotos();
   }
 
@@ -2203,19 +2203,32 @@
           : '<button class="btn danger" data-pdel data-testid="photo-del">삭제</button>') : "") + "</div>";
     } else {
       html = "<h2>" + esc((r.customer || {}).name || "고객") + " 작업 사진</h2>";
+      // 사진 받기: 체크한 사진을 휴대폰에 내려받기
+      if (all.length) {
+        if (P.sel) {
+          var nSel = all.filter(function (p) { return P.sel[p.id]; }).length, allOn = nSel === all.length;
+          html += '<div class="ph-dl" data-testid="ph-dl-bar"><button class="btn" data-pselall data-testid="ph-selall">' + (allOn ? "전체 해제" : "전체 선택") + "</button>" +
+            '<button class="btn primary" data-pdl data-testid="ph-dl"' + (nSel && !P.dlBusy ? "" : " disabled") + ">" + (P.dlBusy ? "받는 중 " + P.dlBusy : nSel + "장 받기") + "</button>" +
+            '<button class="btn" data-pselx>취소</button></div>' +
+            '<p class="muted" style="font-size:13px;margin:-4px 0 8px">받을 사진을 눌러 체크하세요. 휴대폰 <b>갤러리</b>(다운로드 앨범)에 저장돼요. "여러 파일 다운로드"를 물어보면 <b>허용</b>을 누르세요.</p>';
+        } else {
+          html += '<div class="ph-dl"><button class="btn" data-pselon data-testid="ph-select">' + ICON.gallery + "사진 받기 (체크해서 한꺼번에)</button></div>";
+        }
+      }
       var up = UP[P.id];
       if (up && up.total) html += '<div class="banner info" data-testid="photo-busy">사진 ' + up.total + "장 중 " + up.done + "장 올렸어요. 창을 닫아도 계속 올라가요.</div>";
       ["before", "after"].forEach(function (kind) {
         var list = livePhotos(r, kind);
         html += '<div class="ph-sec"><div class="ph-h">' + KIND[kind] + ' <span class="num muted">' + list.length + "장</span></div>" +
           '<div class="ph-grid" data-testid="grid-' + kind + '">' + list.map(function (p, n) {
+            if (P.sel) return '<button class="ph pick' + (P.sel[p.id] ? " on" : "") + '" data-psel="' + esc(p.id) + '" aria-pressed="' + !!P.sel[p.id] + '" data-testid="ph-pick"><img' + blobAttr(p.id) + ' alt="' + KIND[kind] + " 사진 " + (n + 1) + '" loading="lazy"><span class="ck" aria-hidden="true">✓</span></button>';
             return '<button class="ph" data-pv="' + esc(p.id) + '"><img' + blobAttr(p.id) + ' alt="' + KIND[kind] + " 사진 " + (n + 1) + '" loading="lazy"></button>';
           }).join("") +
           // 고르자마자 미리보기, 올라가는 동안 표시
           ((up && up.items) || []).filter(function (u) { return u.kind === kind; }).map(function (u) {
             return '<div class="ph pending' + (u.failed ? " failed" : "") + '" data-testid="pending"><img src="' + esc(u.url) + '" alt=""><span>' + (u.failed ? "실패" : "올리는 중") + "</span></div>";
           }).join("") +
-          (canUp ? '<label class="ph add" data-testid="add-' + kind + '"><input type="file" accept="image/*" multiple class="vh" data-kind="' + kind + '" data-testid="file-' + kind + '">' +
+          (canUp && !P.sel ? '<label class="ph add" data-testid="add-' + kind + '"><input type="file" accept="image/*" multiple class="vh" data-kind="' + kind + '" data-testid="file-' + kind + '">' +
               ICON.gallery + "<span>앨범에서<br>여러 장</span></label>" +
             '<label class="ph add" data-testid="cam-' + kind + '"><input type="file" accept="image/*" capture="environment" class="vh" data-kind="' + kind + '">' +
               ICON.camera + "<span>카메라로<br>찍기</span></label>" : "") + "</div></div>";
@@ -2237,6 +2250,18 @@
   function onPhotoClick(e) {
     var t = e.target;
     if (t.closest("[data-pclose]")) { closeModal(); return; }
+    if (t.closest("[data-pselon]")) { P.sel = {}; renderPhotos(); return; }
+    if (t.closest("[data-pselx]")) { P.sel = null; renderPhotos(); return; }
+    var ps = t.closest("[data-psel]");
+    if (ps && P.sel) { var pid = ps.getAttribute("data-psel"); if (P.sel[pid]) delete P.sel[pid]; else P.sel[pid] = true; renderPhotos(); return; }
+    if (t.closest("[data-pselall]") && P.sel) {
+      var ids = livePhotos(S.all[P.id]).map(function (p) { return p.id; });
+      var on = ids.every(function (x) { return P.sel[x]; });
+      P.sel = {};
+      if (!on) ids.forEach(function (x) { P.sel[x] = true; });
+      renderPhotos(); return;
+    }
+    if (t.closest("[data-pdl]") && P.sel && !P.dlBusy) { downloadPhotos(); return; }
     var v = t.closest("[data-pv]");
     if (v) { P.view = v.getAttribute("data-pv"); P.confirmDel = false; pushLayer(); renderPhotos(); return; }
     if (t.closest("[data-pback]")) { P.view = null; P.confirmDel = false; renderPhotos(); return; }
@@ -2250,6 +2275,45 @@
     if (t.closest("[data-pdel]")) { P.confirmDel = true; renderPhotos(); return; }
     if (t.closest("[data-pdelno]")) { P.confirmDel = false; renderPhotos(); return; }
     if (t.closest("[data-pdelyes]")) { deletePhoto(P.id, P.view); return; }
+  }
+
+  // 체크한 사진을 한 장씩 내려받기
+  async function downloadPhotos() {
+    var r = S.all[P.id], p0 = P;
+    if (!r) return;
+    var picked = [];
+    ["before", "after"].forEach(function (kind) {
+      livePhotos(r, kind).forEach(function (p, n) { if (P.sel[p.id]) picked.push({ p: p, n: n + 1 }); });
+    });
+    if (!picked.length) return;
+    // 파일 이름은 영문·숫자만(한글 이름은 일부 브라우저가 "download"로 바꿔 버림): 예약날짜_시간_before_01.jpg
+    var base = "washer-crew_" + (r.date || "").replace(/-/g, "") + "_" + String(r.time || "").replace(/\D/g, "");
+    var ok = 0;
+    try {
+      var urls = S.assets && S.assets.prefetch ? await S.assets.prefetch(picked.map(function (x) { return x.p.id; })) : {};
+      for (var i = 0; i < picked.length; i++) {
+        p0.dlBusy = (i + 1) + "/" + picked.length;
+        if (P === p0) renderPhotos();
+        var x = picked[i], u = urls[x.p.id] || "/_blob/" + x.p.id;
+        try {
+          var res = await fetch(u);
+          if (!res.ok) throw new Error("http " + res.status);
+          var blob = await res.blob();
+          var ext = /png/.test(blob.type) ? "png" : /webp/.test(blob.type) ? "webp" : "jpg";
+          var a = document.createElement("a"), href = URL.createObjectURL(blob);
+          a.href = href; a.download = base + "_" + x.p.kind + "_" + C.pad(x.n) + "." + ext; a.style.display = "none";
+          document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(function (h) { URL.revokeObjectURL(h); }.bind(null, href), 30000);
+          ok++;
+          await new Promise(function (res2) { setTimeout(res2, 350); }); // 연속 다운로드가 막히지 않게 조금씩 쉬기
+        } catch (e) { /* 한 장 실패해도 계속 */ }
+      }
+    } finally {
+      p0.dlBusy = null;
+      if (ok === picked.length) p0.sel = null;
+      if (P === p0) renderPhotos();
+    }
+    toast(ok === picked.length ? "사진 " + ok + "장을 받았어요. 갤러리에서 확인하세요." : "사진 " + picked.length + "장 중 " + ok + "장만 받았어요. 다시 눌러 주세요.");
   }
 
   // 긴 변 1600px JPEG로 줄여 데이터·저장 공간을 아낌

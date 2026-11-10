@@ -433,6 +433,33 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     ok(d.docs["reservations/r_tmr"].photos[ids[0]].by === "smvivcjg03");
     await p.click("[data-pclose]");
   });
+  await step("사진 받기: 체크해서 한꺼번에 내려받기(전체 선택·해제)", async () => {
+    await p.locator("[data-testid=card]", { hasText: "김민지" }).locator("[data-testid=photos-btn]").click();
+    await p.setInputFiles("[data-testid=file-after]", [{ name: "b.jpg", mimeType: "image/jpeg", buffer: tinyJpeg }, { name: "c.jpg", mimeType: "image/jpeg", buffer: tinyJpeg }]);
+    await p.waitForFunction(() => document.querySelectorAll("[data-testid=grid-after] .ph img[data-blob]").length === 2 && !document.querySelector("[data-testid=photo-busy]"));
+    await p.click("[data-testid=ph-select]");
+    eq(await p.locator("[data-testid=ph-pick]").count(), 3, "체크 칸 3개");
+    eq(await p.locator("[data-testid=add-before]").count(), 0, "고르는 동안 올리기 버튼 숨김");
+    ok(await p.isDisabled("[data-testid=ph-dl]"), "아무것도 안 고르면 받기 꺼짐");
+    await p.click("[data-testid=ph-selall]");
+    eq(await p.innerText("[data-testid=ph-dl]"), "3장 받기");
+    await p.click("[data-testid=ph-selall]");
+    eq(await p.innerText("[data-testid=ph-dl]"), "0장 받기", "전체 해제");
+    await p.locator("[data-testid=grid-after] [data-testid=ph-pick]").first().click();
+    await p.locator("[data-testid=grid-before] [data-testid=ph-pick]").first().click();
+    eq(await p.innerText("[data-testid=ph-dl]"), "2장 받기");
+    const got = [];
+    p.on("download", (dl) => got.push(dl));
+    await p.click("[data-testid=ph-dl]");
+    await p.waitForFunction(() => document.querySelector("#toast").textContent.includes("2장을 받았어요"));
+    eq(got.length, 2, "2장 내려받음");
+    const names = got.map((x) => x.suggestedFilename()).sort();
+    ok(names.some((n) => /^washer-crew_\d{8}_\d{4}_before_01\.jpg$/.test(n)), names.join(","));
+    ok(names.some((n) => /^washer-crew_\d{8}_\d{4}_after_01\.jpg$/.test(n)), names.join(","));
+    eq((await fs.promises.readFile(await got[0].path())).length > 0, true, "파일 내용 있음");
+    eq(await p.locator("[data-testid=ph-pick]").count(), 0, "다 받으면 고르기 끝");
+    await p.click("[data-pclose]");
+  });
   const p2 = await webPage(ctx, { session: "u-park", label: "park" }); // 같은 기기(저장소 공유), 다른 탭에서 다른 직원
   await step("직원: 오늘 일정·내 작업·미배정 칸이 먼저", async () => {
     await p2.waitForSelector("[data-testid=tile-today]");
@@ -459,7 +486,7 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     await p2.click("[data-testid=photo-del]");
     await p2.click("[data-testid=photo-del-yes]");
     await p2.waitForFunction(() => document.querySelector("#toast").textContent.includes("올린 사람이나 사장님만"));
-    eq(Object.keys((await fakeDb(p2)).files).length, 1);
+    eq(Object.keys((await fakeDb(p2)).files).length, 3, "사장님 사진 3장 그대로");
   });
   await step("다른 직원 화면에 새 예약 실시간 반영(같은 기기 다른 탭)", async () => {
     const t2 = await webPage(p2.context(), { session: "u-park", label: "park2", path: "" });
