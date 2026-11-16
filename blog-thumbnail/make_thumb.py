@@ -23,12 +23,12 @@ SUB_FONT = HERE / "fonts" / "Recipekorea.ttf"
 
 # 모든 수치는 한 변 길이(S)에 대한 비율
 BAND_ALPHA = 120          # 띠 불투명도 (0~255), 약 47%
-TITLE_SIZE = 0.068        # 제목 글자 크기
-TITLE_GAP = 0.105         # 제목 줄 간격 (중심-중심)
-SUB_SIZE = 0.041          # '굿디 클린' 글자 크기
-PAD_TOP = 0.090           # 띠 위끝 ~ 제목 첫 줄 중심
-SUB_GAP = 0.115           # 제목 마지막 줄 중심 ~ 부제 중심
-PAD_BOTTOM = 0.062        # 부제 중심 ~ 띠 아래끝
+TITLE_SIZE = 0.075        # 제목 글자 크기
+TITLE_GAP = 0.113         # 제목 줄 간격 (중심-중심)
+SUB_SIZE = 0.045          # '굿디 클린' 글자 크기
+PAD_TOP = 0.095           # 띠 위끝 ~ 제목 첫 줄 중심
+SUB_GAP = 0.122           # 제목 마지막 줄 중심 ~ 부제 중심
+PAD_BOTTOM = 0.064        # 부제 중심 ~ 띠 아래끝
 MAX_TEXT_W = 0.88         # 글자가 이 폭을 넘으면 자동으로 줄임
 
 
@@ -45,14 +45,13 @@ def fit_font(path, size, lines, max_w):
     return font
 
 
-def draw_text(base, text, font, cx, cy, stroke, shadow):
-    """흰 글씨 + 검정 테두리 + 아래오른쪽 흐린 그림자."""
+def draw_text(base, text, font, cx, cy, shadow):
+    """흰 글씨 + 오른쪽 아래로 떨어지는 진한 검정 그림자 (테두리 없음)."""
     sh = Image.new("RGBA", base.size, (0, 0, 0, 0))
     ImageDraw.Draw(sh).text((cx + shadow, cy + shadow), text, font=font, anchor="mm",
-                            fill=(0, 0, 0, 170), stroke_width=stroke, stroke_fill=(0, 0, 0, 170))
-    base.alpha_composite(sh.filter(ImageFilter.GaussianBlur(shadow * 0.8)))
-    ImageDraw.Draw(base).text((cx, cy), text, font=font, anchor="mm", fill="white",
-                              stroke_width=stroke, stroke_fill=(20, 20, 20))
+                            fill=(0, 0, 0, 235))
+    base.alpha_composite(sh.filter(ImageFilter.GaussianBlur(shadow * 0.25)))
+    ImageDraw.Draw(base).text((cx, cy), text, font=font, anchor="mm", fill="white")
 
 
 def make(photo, title, out, subtitle="굿디 클린", band_top=0.12, size=1080, crop_y=0.5):
@@ -72,11 +71,11 @@ def make(photo, title, out, subtitle="굿디 클린", band_top=0.12, size=1080, 
     tfont = fit_font(TITLE_FONT, int(S * TITLE_SIZE), lines, S * MAX_TEXT_W)
     for i, t in enumerate(lines):
         draw_text(img, t, tfont, S / 2, first + S * TITLE_GAP * i,
-                  stroke=max(2, round(S * 0.0045)), shadow=max(2, round(S * 0.005)))
+                  shadow=max(2, round(S * 0.0045)))
     if subtitle:
         sfont = fit_font(SUB_FONT, int(S * SUB_SIZE), [subtitle], S * MAX_TEXT_W)
         draw_text(img, subtitle, sfont, S / 2, sub_y,
-                  stroke=max(1, round(S * 0.0028)), shadow=max(2, round(S * 0.004)))
+                  shadow=max(2, round(S * 0.0032)))
 
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
