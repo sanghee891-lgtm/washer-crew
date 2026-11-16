@@ -15,6 +15,10 @@
 그 밖의 기능·구조는 저장소 맨 위 `README.md`와 같습니다.
 
 ## 아직 남은 일 (처음 한 번)
+> 서버 비용: 지금 Supabase 조직은 Pro라 프로젝트를 하나 더 켜면 월 약 $10이 붙음.
+> 비용 없이 하려면 대시보드에서 **Free 요금제 조직을 새로 만들고** 그 안에 만듦(무료 프로젝트 2개까지, 7일 안 쓰면 일시정지 → keepalive로 방지, DB 500MB·사진 1GB).
+> 처음 계정은 **신창민(관리자) 1명**만, 직원은 나중에 앱의 직원 관리에서 추가.
+
 1. **새 Supabase 프로젝트**(서울) 만들기 → `supabase/migrations/0001~0009`를 순서대로 적용, `supabase/functions/` 3개 배포
 2. Vault에 `vapid_public`·`vapid_private`·`push_hook_secret` 저장, 직원 계정 만들기(아이디 `<직원번호>@goodclean-aircon.local`)
 3. `web/config.js`에 새 프로젝트 주소·공개 키·VAPID 공개 키 넣기 (지금은 비어 있어서 세탁기 서버와 섞이지 않음)
