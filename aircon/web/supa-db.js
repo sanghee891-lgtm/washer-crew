@@ -1,0 +1,672 @@
+/* Supabase 연결: 예전 claude.use("db" | "user" | "downloads" | "assets") 와 같은 모양으로 만들어 app.js 를 그대로 씁니다.
+   추가: "push"(휴대폰 알림), "bookings"(고객 예약 요청).
+   로그인(이름 고르기 + 숫자 6자리)이 끝나야 use() 가 값을 돌려줍니다. 테스트의 가짜 런타임이 먼저 있으면 아무것도 하지 않습니다. */
+(function () {
+  "use strict";
+  if (window.claude || !window.supabase || !window.WC_CONFIG) return;
+  var CFG = window.WC_CONFIG;
+  var sb = window.supabase.createClient(CFG.url, CFG.key, {
+    auth: { persistSession: true, autoRefreshToken: true, storageKey: "wc.auth" }
+  });
+  var ACC = null; // { uid, staffId, isOwner }
+  var readyResolve;
+  var ready = new Promise(function (r) { readyResolve = r; });
+
+  function $(sel, el) { return (el || document).querySelector(sel); }
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function local(k, v) {
+    try { if (v === undefined) return JSON.parse(localStorage.getItem("wc." + k) || "null"); localStorage.setItem("wc." + k, JSON.stringify(v)); } catch (e) { return null; }
+  }
+  function err(code, e) { return { code: code, message: (e && e.message) || code }; }
+  function mapErr(e) {
+    if (!e) return err("unknown");
+    if (e.code === "P0002" || e.code === "42501" || /row-level security|permission denied/i.test(e.message || "")) return err("invalid_argument", e);
+    return err("unavailable", e);
+  }
+  function emailOf(staffId) { return String(staffId).toLowerCase() + "@" + (CFG.emailDomain || "goodclean-aircon.local"); }
+
+  // ---------------- 로그인 ----------------
+  async function loadAccount(session) {
+    var uid = session.user.id;
+    var r = await sb.from("staff_accounts").select("staff_id, is_owner").eq("uid", uid).maybeSingle();
+    if (r.error) {
+      // 인터넷이 잠깐 끊겨도 이 기기에 기억해 둔 계정으로 열기
+      var c = local("account");
+      return c && c.uid === uid ? c : null;
+    }
+    if (!r.data) return null;
+    var acc = { uid: uid, staffId: r.data.staff_id, isOwner: !!r.data.is_owner };
+    local("account", acc);
+    return acc;
+  }
+
+  async function start() {
+    var s = (await sb.auth.getSession()).data.session;
+    if (s) {
+      var acc = await loadAccount(s);
+      if (acc) {
+        ACC = acc;
+        if (lockDue()) { showLock(); return; } // 공용 기기: 오래 안 썼으면 잠금부터
+        afterLogin(); return;
+      }
+      await sb.auth.signOut().catch(function () {});
+    }
+    showLogin();
+  }
+
+  var started = false;
+  function afterLogin() {
+    var box = $("#login");
+    if (box) box.remove();
+    document.documentElement.classList.remove("need-login");
+    touchActive(true);
+    if (started) return; // 잠금 해제
+    started = true;
+    readyResolve();
+    resaveSubscription();
+  }
+
+  // ---------------- 자동 잠금(기기마다 선택, 기본은 사용 안 함) ----------------
+  function lockMin() { return +(local("lockMin") || 0); }
+  var lastTouch = 0;
+  function touchActive(force) {
+    var now = Date.now();
+    if (!force && now - lastTouch < 15000) return;
+    lastTouch = now;
+    local("lastActive", now);
+  }
+  function lockDue() {
+    var m = lockMin(), last = +(local("lastActive") || 0);
+    return m > 0 && last > 0 && Date.now() - last > m * 60000;
+  }
+  function showLock() {
+    LOGIN.lock = true; LOGIN.pick = ACC.staffId; LOGIN.pin = ""; LOGIN.msg = "";
+    showLogin();
+  }
+  function checkLock() { if (ACC && !LOGIN.lock && !$("#login") && lockDue()) showLock(); }
+  ["pointerdown", "keydown"].forEach(function (ev) { document.addEventListener(ev, function () { if (ACC && !$("#login")) touchActive(); }, true); });
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible") checkLock(); else if (ACC && !$("#login")) touchActive(true);
+  });
+  setInterval(checkLock, 30000);
+
+  // 그만둔 직원(계정 삭제·로그인 막기)은 다음에 화면을 켤 때 바로 로그아웃
+  async function checkStillStaff() {
+    if (!ACC) return;
+    var r = await sb.from("staff_accounts").select("uid").eq("uid", ACC.uid).maybeSingle();
+    if (!r.error && !r.data) {
+      try { localStorage.removeItem("wc.account"); } catch (e) { /* 무시 */ }
+      await sb.auth.signOut().catch(function () {});
+      alert("사용이 중지된 계정이에요. 사장님께 문의해 주세요.");
+      location.replace(location.pathname);
+    }
+  }
+
+  var LOGIN = { names: null, pick: null, pin: "", busy: false, msg: "", lock: false, needCode: false, code: "" };
+  // 가게 코드: 맞게 넣은 기기에만 직원 이름 목록을 보여 줌(이 기기에 기억)
+  var CODE_KEY = "wc.shopCode";
+  function savedCode() { try { return localStorage.getItem(CODE_KEY) || ""; } catch (e) { return ""; } }
+  function saveCode(c) { try { if (c) localStorage.setItem(CODE_KEY, c); else localStorage.removeItem(CODE_KEY); } catch (e) { /* 무시 */ } }
+  async function loadNames() {
+    var sess = await sb.auth.getSession();
+    var r;
+    if (sess && sess.data && sess.data.session) {
+      r = await sb.rpc("login_staff_roles"); // 잠금 화면: 이미 로그인한 기기는 코드 없이
+    } else {
+      var code = savedCode();
+      if (!code) { LOGIN.needCode = true; LOGIN.names = null; return; }
+      r = await sb.rpc("login_staff_roles", { p_code: code });
+      var m = r.error && (r.error.message || "");
+      if ((r.error && /bad_code/.test(m)) || (!r.error && !(r.data || []).length)) { // 틀린 코드는 빈 목록
+        saveCode(""); LOGIN.needCode = true; LOGIN.names = null;
+        LOGIN.msg = "가게 코드가 바뀌었어요. 사장님께 새 코드를 받아 넣어 주세요."; return;
+      }
+      if (r.error && /too_many/.test(m)) { LOGIN.needCode = true; LOGIN.names = null; LOGIN.msg = "여러 번 틀렸어요. 10분 뒤에 다시 해 주세요."; return; }
+      if (r.error && (r.error.code === "PGRST202" || /function|schema cache/i.test(m))) r = await sb.rpc("login_staff_roles"); // 예전 서버
+    }
+    if (r.error) r = await sb.rpc("login_staff"); // 예전 서버 함수(역할 없음)
+    if (r.error) { LOGIN.msg = "인터넷 연결을 확인해 주세요."; LOGIN.names = []; }
+    else { LOGIN.names = r.data || []; LOGIN.needCode = false; }
+  }
+  async function typeCode(d) {
+    if (LOGIN.busy || LOGIN.code.length >= 6) return;
+    LOGIN.code += d; LOGIN.msg = "";
+    renderLogin();
+    if (LOGIN.code.length < 6) return;
+    LOGIN.busy = true; renderLogin();
+    var r = await sb.rpc("login_staff_roles", { p_code: LOGIN.code });
+    LOGIN.busy = false;
+    if (!r.error && !(r.data || []).length) r = { error: { message: "bad_code" } }; // 틀린 코드는 빈 목록
+    if (!r.error) { saveCode(LOGIN.code); LOGIN.code = ""; LOGIN.needCode = false; LOGIN.names = r.data || []; renderLogin(); return; }
+    var m = r.error.message || "";
+    LOGIN.code = "";
+    LOGIN.msg = /too_many/.test(m) ? "여러 번 틀렸어요. 10분 뒤에 다시 해 주세요." : /bad_code/.test(m) ? "가게 코드가 맞지 않아요. 다시 눌러 주세요." : "인터넷 연결을 확인해 주세요.";
+    renderLogin();
+  }
+  var DEFAULT_PIN = "000000";
+  async function showLogin() {
+    document.documentElement.classList.add("need-login");
+    var box = $("#login");
+    if (!box) {
+      box = document.createElement("div");
+      box.id = "login";
+      box.setAttribute("role", "dialog");
+      box.setAttribute("aria-label", "로그인");
+      document.body.appendChild(box);
+      box.addEventListener("click", onLoginClick);
+      document.addEventListener("keydown", onLoginKey);
+    }
+    renderLogin();
+    if (!LOGIN.names) { await loadNames(); renderLogin(); }
+  }
+
+  // 이름 아래 표시: 관리 권한 계정(신창민)은 "개발자", 나머지는 "사장님"(표시만, 권한은 그대로)
+  var ROLE = { owner: "개발자", staff: "사장님" };
+  var SVG = {
+    user: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c.9-3.6 3.7-5.5 7-5.5s6.1 1.9 7 5.5"/></svg>',
+    chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>',
+    back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>'
+  };
+  function avatar(p, big) {
+    return '<span class="lr-av' + (p.is_owner ? " owner" : "") + (big ? " big" : "") + '">' + SVG.user + "</span>";
+  }
+  function renderLogin() {
+    var box = $("#login");
+    if (!box) return;
+    var html = '<div class="login-in"><div class="login-brand"><span class="login-mark"><img src="assets/mark.webp" alt=""></span>' +
+      '<div class="login-title">굿디<b>클린</b></div><div class="login-sub">예약 · 매출 관리</div></div>';
+    if (LOGIN.needCode && !LOGIN.pick) {
+      html += '<div class="login-card" data-testid="code-card"><div class="login-head"><h1>가게 코드를 눌러 주세요</h1><p>사장님께 받은 숫자 6자리예요. 이 휴대폰에 기억돼서 한 번만 넣으면 돼요.</p></div>' +
+        '<div class="pin-dots" aria-label="입력한 자리 수 ' + LOGIN.code.length + '">' +
+        [0, 1, 2, 3, 4, 5].map(function (i) { return '<i class="' + (i < LOGIN.code.length ? "on" : "") + '"></i>'; }).join("") + "</div>" +
+        '<p class="login-err" data-testid="code-err">' + esc(LOGIN.busy ? "" : LOGIN.msg) + (LOGIN.busy ? '<span class="muted">확인 중…</span>' : "") + "</p></div>" +
+        '<div class="pin-pad">' + [1, 2, 3, 4, 5, 6, 7, 8, 9].map(function (n) { return '<button class="btn" data-ckey="' + n + '">' + n + "</button>"; }).join("") +
+        '<span></span><button class="btn" data-ckey="0">0</button><button class="btn" data-cdel aria-label="한 자리 지우기">지우기</button></div>';
+    } else if (!LOGIN.pick) {
+      html += '<div class="login-head"><h1>접속할 사용자를 선택해주세요</h1><p>선택한 사용자로 업무를 시작합니다.</p></div>';
+      if (!LOGIN.names) html += '<p class="muted login-wait">불러오는 중…</p>';
+      else if (!LOGIN.names.length) html += '<p class="login-err">' + esc(LOGIN.msg || "등록된 직원이 없어요. 사장님께 문의해 주세요.") + '</p><button class="btn wide" data-retry>다시 시도</button>';
+      else html += '<div class="login-list">' + LOGIN.names.map(function (p) {
+        return '<button class="login-row" data-name="' + esc(p.id) + '" data-testid="login-' + esc(p.name) + '">' + avatar(p) +
+          '<span class="lr-name"><b>' + esc(p.name) + "</b><small>" + (p.is_owner ? ROLE.owner : ROLE.staff) + "</small></span>" +
+          '<span class="lr-chev">' + SVG.chev + "</span></button>";
+      }).join("") + "</div>";
+    } else {
+      var who = (LOGIN.names || []).filter(function (p) { return p.id === LOGIN.pick; })[0] || {};
+      html += '<div class="login-card"><button class="login-back" data-back data-testid="login-back">' + SVG.back + (LOGIN.lock ? "다른 사용자로 로그인" : "다른 사용자 선택") + "</button>" +
+        (LOGIN.lock ? '<p class="login-lockmsg" data-testid="lock-msg">한동안 쓰지 않아 잠겼어요.</p>' : "") +
+        '<div class="login-who">' + avatar(who, true) + "<b>" + esc(who.name) + "님</b><small>" + (who.is_owner ? ROLE.owner : ROLE.staff) + "</small></div>" +
+        '<p class="login-ask">비밀번호 숫자 6자리를 누르세요.</p>' +
+        '<div class="pin-dots" aria-label="입력한 자리 수 ' + LOGIN.pin.length + '">' +
+        [0, 1, 2, 3, 4, 5].map(function (i) { return '<i class="' + (i < LOGIN.pin.length ? "on" : "") + '"></i>'; }).join("") + "</div>" +
+        '<p class="login-err" data-testid="login-err">' + esc(LOGIN.busy ? "" : LOGIN.msg) + (LOGIN.busy ? '<span class="muted">확인 중…</span>' : "") + "</p></div>" +
+        '<div class="pin-pad">' + [1, 2, 3, 4, 5, 6, 7, 8, 9].map(function (n) { return '<button class="btn" data-key="' + n + '">' + n + "</button>"; }).join("") +
+        '<span></span><button class="btn" data-key="0">0</button><button class="btn" data-del aria-label="한 자리 지우기">지우기</button></div>';
+    }
+    // 홈 화면 앱으로 연 게 아니면: 카톡 안이면 크롬·사파리로 넘기는 안내, 아니면 설치 버튼
+    var I = window.WCInstall;
+    if (I && I.needed() && !LOGIN.pick) {
+      html += I.inApp() ? I.inAppBoxHtml()
+        : '<div class="inst-box"><button class="btn wide" data-install data-testid="login-install">홈 화면에 앱 설치</button>' +
+          (LOGIN.steps ? I.stepsHtml() : "") + "</div>";
+    }
+    box.innerHTML = html + '<div class="login-foot">GOOD:D CLEAN WORKSPACE</div></div>';
+  }
+
+  function onLoginKey(e) {
+    if (!$("#login")) return;
+    if (LOGIN.needCode && !LOGIN.pick) {
+      if (/^[0-9]$/.test(e.key)) typeCode(e.key);
+      else if (e.key === "Backspace") { LOGIN.code = LOGIN.code.slice(0, -1); renderLogin(); }
+      return;
+    }
+    if (!LOGIN.pick) return;
+    if (/^[0-9]$/.test(e.key)) typeKey(e.key);
+    else if (e.key === "Backspace") { LOGIN.pin = LOGIN.pin.slice(0, -1); renderLogin(); }
+  }
+  function onLoginClick(e) {
+    var t = e.target;
+    var n = t.closest("[data-name]");
+    if (n) { LOGIN.pick = n.getAttribute("data-name"); LOGIN.pin = ""; LOGIN.msg = ""; renderLogin(); return; }
+    if (t.closest("[data-retry]")) { LOGIN.names = null; LOGIN.msg = ""; showLogin(); return; }
+    var ck = t.closest("[data-ckey]");
+    if (ck) { typeCode(ck.getAttribute("data-ckey")); return; }
+    if (t.closest("[data-cdel]")) { LOGIN.code = LOGIN.code.slice(0, -1); renderLogin(); return; }
+    if (t.closest("[data-install]") && window.WCInstall) {
+      window.WCInstall.prompt().then(function (res) { if (res === "manual") LOGIN.steps = true; renderLogin(); });
+      return;
+    }
+    if (t.closest("[data-back]")) {
+      if (LOGIN.lock) { switchUser(); return; }
+      LOGIN.pick = null; LOGIN.pin = ""; LOGIN.msg = ""; renderLogin(); return;
+    }
+    if (t.closest("[data-del]")) { LOGIN.pin = LOGIN.pin.slice(0, -1); renderLogin(); return; }
+    var k = t.closest("[data-key]");
+    if (k) typeKey(k.getAttribute("data-key"));
+  }
+  async function typeKey(d) {
+    if (LOGIN.busy || LOGIN.pin.length >= 6) return;
+    LOGIN.pin += d; LOGIN.msg = "";
+    renderLogin();
+    if (LOGIN.pin.length < 6) return;
+    LOGIN.busy = true; renderLogin();
+    var r = await sb.auth.signInWithPassword({ email: emailOf(LOGIN.pick), password: LOGIN.pin });
+    var acc = !r.error && r.data.session ? await loadAccount(r.data.session) : null;
+    LOGIN.busy = false;
+    if (acc) {
+      // 처음 번호(000000)로 들어온 직원은 장부에서 비밀번호 바꾸기 안내(사장님 제외)
+      if (LOGIN.pin === DEFAULT_PIN && !acc.isOwner) local("defaultPin", acc.uid);
+      LOGIN.lock = false; LOGIN.pin = "";
+      ACC = acc; afterLogin(); return;
+    }
+    LOGIN.pin = "";
+    LOGIN.msg = r.error && /invalid/i.test(r.error.message || "") ? "비밀번호가 맞지 않아요. 다시 눌러 주세요."
+      : r.error && r.error.status === 429 ? "너무 여러 번 틀렸어요. 잠시 뒤 다시 해 주세요."
+      : "로그인하지 못했어요. 인터넷 연결을 확인해 주세요.";
+    renderLogin();
+  }
+
+  // ---------------- db: 문서형 저장소 ----------------
+  function segs(p) { return String(p).split("/").filter(Boolean); }
+  function freeze(o) {
+    if (o && typeof o === "object") { Object.freeze(o); Object.keys(o).forEach(function (k) { freeze(o[k]); }); }
+    return o;
+  }
+  function snapOf(path, data) {
+    var body = data == null ? undefined : freeze(JSON.parse(JSON.stringify(data)));
+    return { id: path.split("/").pop(), exists: body !== undefined, data: function () { return body; }, metadata: { fromCache: false, hasPendingWrites: false } };
+  }
+  function newId() {
+    var a = "abcdefghijklmnopqrstuvwxyz0123456789", out = "";
+    var b = crypto.getRandomValues(new Uint8Array(20));
+    for (var i = 0; i < 20; i++) out += a[b[i] % 36];
+    return out;
+  }
+
+  // 실시간: docs 표의 변경을 하나의 채널로 받아, 해당 경로를 보고 있는 화면만 다시 불러옴
+  var LISTENERS = new Set();
+  function touch(path) { LISTENERS.forEach(function (l) { if (!path || l.match(path)) l.schedule(); }); }
+  function refreshAll() { touch(null); BOOK.schedule(); }
+  var channel = null;
+  function ensureChannel() {
+    if (channel) return;
+    channel = sb.channel("wc-docs")
+      .on("postgres_changes", { event: "*", schema: "public", table: "docs" }, function (p) {
+        touch((p.new && p.new.path) || (p.old && p.old.path) || null);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "booking_requests" }, function () { BOOK.schedule(); })
+      .subscribe(function (status) { if (status === "SUBSCRIBED") refreshAll(); });
+  }
+  // 휴대폰을 껐다 켜거나 인터넷이 다시 연결되면 최신으로
+  document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible" && ACC) { refreshAll(); checkStillStaff(); } });
+  window.addEventListener("online", function () { if (ACC) refreshAll(); });
+  setInterval(function () { if (ACC && document.visibilityState === "visible") refreshAll(); }, 90000);
+
+  function listen(match, fetcher, next, onErr) {
+    var last = "\u0000", seq = 0, timer = null, failedOnce = false, alive = true;
+    var l = {
+      match: match,
+      schedule: function () { clearTimeout(timer); timer = setTimeout(run, 60); }
+    };
+    async function run() {
+      if (!alive) return;
+      var my = ++seq;
+      try {
+        var res = await fetcher();
+        if (!alive || my !== seq) return;
+        var s = JSON.stringify(res.key);
+        if (s === last) return;
+        last = s;
+        next(res.snap);
+      } catch (e) {
+        if (!alive) return;
+        if (!failedOnce && onErr) { failedOnce = true; onErr(mapErr(e)); }
+        clearTimeout(timer); timer = setTimeout(run, 5000);
+      }
+    }
+    LISTENERS.add(l);
+    ensureChannel();
+    setTimeout(run, 0);
+    return function () { alive = false; clearTimeout(timer); LISTENERS.delete(l); };
+  }
+
+  async function fetchDoc(path) {
+    var r = await sb.from("docs").select("data").eq("path", path).maybeSingle();
+    if (r.error) throw r.error;
+    return r.data ? r.data.data : undefined;
+  }
+
+  function docRef(path) {
+    if (segs(path).length % 2) throw new TypeError("doc path needs even segments: " + path);
+    return {
+      id: segs(path).pop(), path: path,
+      get: async function () { return snapOf(path, await fetchDoc(path)); },
+      set: async function (data) {
+        var r = await sb.from("docs").upsert({ path: path, data: JSON.parse(JSON.stringify(data)), updated_at: new Date().toISOString() });
+        if (r.error) throw mapErr(r.error);
+        touch(path);
+      },
+      update: async function (data) {
+        var r = await sb.rpc("docs_merge", { p_path: path, p_patch: JSON.parse(JSON.stringify(data)) });
+        if (r.error) throw mapErr(r.error);
+        touch(path);
+      },
+      delete: async function () {
+        var r = await sb.from("docs").delete().eq("path", path).select("path");
+        if (r.error) throw mapErr(r.error);
+        // 권한이 없어 안 지워졌으면(남은 문서가 있으면) 알림
+        if (!r.data.length && (await fetchDoc(path)) !== undefined) throw err("invalid_argument");
+        touch(path);
+      },
+      onSnapshot: function (next, onErr) {
+        return listen(function (p) { return p === path; }, async function () {
+          var d = await fetchDoc(path);
+          return { key: d === undefined ? null : d, snap: snapOf(path, d) };
+        }, next, onErr);
+      },
+      collection: function (sub) { return colRef(path + "/" + sub); }
+    };
+  }
+
+  var SERVER_OPS = { "==": "eq", "<": "lt", "<=": "lte", ">": "gt", ">=": "gte" };
+  function query(col, filters, order, lim) {
+    async function rows() {
+      var out = [], from = 0, PAGE = 1000;
+      for (;;) {
+        var q = sb.from("docs").select("path, data").eq("coll", col);
+        // 문자열 비교는 서버에서 먼저 걸러 주고, 결과는 아래에서 한 번 더 정확히 거름
+        filters.forEach(function (f) {
+          if (SERVER_OPS[f[1]] && typeof f[2] === "string") q = q[SERVER_OPS[f[1]]]("data->>" + f[0], f[2]);
+        });
+        var r = await q.order("path").range(from, from + PAGE - 1);
+        if (r.error) throw r.error;
+        out = out.concat(r.data);
+        if (r.data.length < PAGE) return out;
+        from += PAGE;
+      }
+    }
+    async function run() {
+      var out = (await rows()).filter(function (row) {
+        var d = row.data;
+        return filters.every(function (f) {
+          var v = d[f[0]], x = f[2];
+          switch (f[1]) {
+            case "==": return v === x; case "!=": return v !== x;
+            case "<": return v < x; case "<=": return v <= x; case ">": return v > x; case ">=": return v >= x;
+            case "in": return x.indexOf(v) >= 0; case "not-in": return x.indexOf(v) < 0;
+            case "array-contains": return Array.isArray(v) && v.indexOf(x) >= 0;
+          }
+          return false;
+        });
+      }).map(function (row) { return [row.path, row.data]; });
+      out.sort(function (a, b) {
+        if (order) { var x = a[1][order[0]], y = b[1][order[0]]; if (x !== y) return (x < y ? -1 : 1) * (order[1] === "desc" ? -1 : 1); }
+        return a[0] < b[0] ? -1 : 1;
+      });
+      if (lim) out = out.slice(0, lim);
+      var docs = out.map(function (e) { return snapOf(e[0], e[1]); });
+      return {
+        key: out,
+        snap: { docs: docs, size: docs.length, empty: !docs.length, docChanges: function () { return []; }, metadata: { fromCache: false, hasPendingWrites: false } }
+      };
+    }
+    var n = segs(col).length;
+    return {
+      where: function (f, op, v) { return query(col, filters.concat([[f, op, v]]), order, lim); },
+      orderBy: function (f, dir) { return query(col, filters, [f, dir || "asc"], lim); },
+      limit: function (k) { return query(col, filters, order, k); },
+      get: async function () { try { return (await run()).snap; } catch (e) { throw mapErr(e); } },
+      onSnapshot: function (next, onErr) {
+        return listen(function (p) { var s = segs(p); return s.length === n + 1 && p.indexOf(col + "/") === 0; }, run, next, onErr);
+      }
+    };
+  }
+
+  function colRef(path) {
+    if (segs(path).length % 2 === 0) throw new TypeError("collection path needs odd segments: " + path);
+    var q = query(path, [], null, 0);
+    q.path = path;
+    q.doc = function (id) { return docRef(path + "/" + (id || newId())); };
+    q.add = async function (data) { var r = q.doc(); await r.set(data); return r; };
+    return q;
+  }
+  var db = { doc: docRef, collection: colRef };
+
+  // ---------------- user: 로그인한 직원 ----------------
+  var user = {
+    id: async function () { return ACC && ACC.uid; },
+    staffId: async function () { return ACC && ACC.staffId; },
+    isOwner: async function () { return !!(ACC && ACC.isOwner); },
+    canEdit: async function () { return true; },
+    can: async function (n) { return n === "data.write"; },
+    me: async function () { return { id: ACC && ACC.uid, name: "", email: null, isOwner: !!(ACC && ACC.isOwner), canEdit: true, avatarUrl: "", color: "#888" }; },
+    profiles: async function (ids) { var o = {}; [].concat(ids).forEach(function (i) { o[i] = { id: i, name: "", avatarUrl: "", color: "#888", email: null, isMe: ACC && i === ACC.uid, guest: false }; }); return o; },
+    lockMinutes: function () { return lockMin(); },
+    setLockMinutes: function (m) { local("lockMin", +m || 0); touchActive(true); },
+    lockNow: function () { if (ACC) showLock(); },
+    switchUser: function () { return switchUser(); },
+    signOut: async function () {
+      await disablePushQuietly();
+      await sb.auth.signOut().catch(function () {});
+      try { localStorage.removeItem("wc.account"); localStorage.removeItem("wc.defaultPin"); } catch (e) { /* 무시 */ }
+      location.replace(location.pathname);
+    },
+    changePin: async function (pin) {
+      if (!/^\d{6}$/.test(pin)) throw err("bad_pin");
+      if (pin === DEFAULT_PIN) throw err("default_pin");
+      var r = await sb.auth.updateUser({ password: pin });
+      if (r.error) throw err(/different|same/i.test(r.error.message || "") ? "same_pin" : "unavailable", r.error);
+      try { localStorage.removeItem("wc.defaultPin"); } catch (e) { /* 무시 */ }
+    },
+    // 처음 번호 그대로 쓰는 중인지(이 기기에서 000000으로 로그인했고 아직 안 바꿈)
+    needsPinChange: async function () { return !!(ACC && !ACC.isOwner && local("defaultPin") === ACC.uid); },
+    // 사장님: 직원 계정 목록과 비밀번호 정하기
+    accounts: async function () {
+      var r = await sb.from("staff_accounts").select("staff_id, is_owner");
+      if (r.error) throw mapErr(r.error);
+      var o = {};
+      r.data.forEach(function (a) { o[a.staff_id] = { isOwner: a.is_owner }; });
+      return o;
+    },
+    setPin: async function (staffId, pin) { return adminCall({ action: "set_pin", staffId: staffId, pin: pin }); },
+    removeAccount: async function (staffId) { return adminCall({ action: "remove", staffId: staffId }); }
+  };
+  async function adminCall(body) {
+    var r = await sb.functions.invoke("staff-admin", { body: body });
+    if (r.error) {
+      var detail = null;
+      try { detail = await r.error.context.json(); } catch (e) { /* 무시 */ }
+      throw err((detail && detail.error) || "unavailable", r.error);
+    }
+    return r.data;
+  }
+
+  // ---------------- downloads: 파일 받기 ----------------
+  // 한글 파일 이름은 일부 브라우저가 "download"로 바꿔 버려서 영문으로 저장(예: goodclean-aircon_2026-10.csv)
+  function asciiName(name) {
+    var n = String(name).replace(/^예약내역_/, "goodclean-aircon_").replace(/년/g, "").replace(/[^\x20-\x7e]/g, "");
+    return /^[^.]+\.\w+$/.test(n) ? n : "goodclean-aircon" + (String(name).match(/\.\w+$/) || [""])[0];
+  }
+  var downloads = {
+    save: async function (req) {
+      var blob = new Blob([req.data], { type: /\.csv$/i.test(req.filename) ? "text/csv;charset=utf-8" : /\.json$/i.test(req.filename) ? "application/json" : "application/octet-stream" });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url; a.download = asciiName(req.filename); a.style.display = "none";
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 30000);
+      return { status: "saved" };
+    }
+  };
+
+  // ---------------- assets: 작업 사진(비공개 보관함) ----------------
+  var BUCKET = "photos";
+  var URLS = local("photoUrls") || {}; // id → {u, e} 서명된 주소와 만료 시각(같은 주소를 다시 써서 휴대폰 캐시를 살림)
+  (function prune() { var now = Date.now(); Object.keys(URLS).forEach(function (k) { if (!URLS[k] || URLS[k].e < now) delete URLS[k]; }); })();
+  var saveUrls = (function () { var t; return function () { clearTimeout(t); t = setTimeout(function () { local("photoUrls", URLS); }, 300); }; })();
+  var inflight = {};
+  function hexId() { return Array.from(crypto.getRandomValues(new Uint8Array(16))).map(function (b) { return ("0" + b.toString(16)).slice(-2); }).join(""); }
+  var assets = {
+    upload: async function (blob, opt) {
+      if (!(blob instanceof Blob) || !blob.size) throw err("invalid_request");
+      var type = (opt && opt.type) || blob.type;
+      if (!/^image\/(jpeg|png|webp)$/.test(type)) throw err("unsupported_type");
+      var id = hexId();
+      var r = await sb.storage.from(BUCKET).upload(id, blob, { contentType: type, cacheControl: "31536000", upsert: false });
+      if (r.error) {
+        var st = +(r.error.statusCode || r.error.status || 0);
+        throw err(st === 413 ? "too_large" : st === 429 ? "rate_limited" : st === 403 ? "invalid_argument" : st >= 500 ? "store_unavailable" : "upstream_error", r.error);
+      }
+      return { id: id, url: null, sizeBytes: blob.size, contentType: type };
+    },
+    delete: async function (ref) {
+      var id = String(ref).split("/").pop();
+      var r = await sb.storage.from(BUCKET).remove([id]);
+      if (r.error) throw err("upstream_error", r.error);
+      if (r.data && r.data.length) { delete URLS[id]; saveUrls(); return { deleted: true }; }
+      // 지워지지 않았는데 파일이 남아 있으면 남이 올린 사진
+      var l = await sb.storage.from(BUCKET).list("", { search: id, limit: 1 });
+      if (!l.error && l.data && l.data.some(function (f) { return f.name === id; })) throw err("not_uploader");
+      return { deleted: false };
+    },
+    list: async function () {
+      var r = await sb.rpc("photo_usage");
+      if (r.error) throw mapErr(r.error);
+      var u = r.data || {};
+      return { assets: [], usage: { files: u.files || 0, bytes: u.bytes || 0, maxFiles: 100000, maxBytes: 1073741824 } };
+    },
+    // 화면용 주소: 있으면 바로, 없으면 prefetch 후 채움
+    src: function (id) { var c = URLS[id]; return c && c.e > Date.now() + 60000 ? c.u : null; },
+    prefetch: async function (ids) {
+      var need = ids.filter(function (id) { return !assets.src(id) && !inflight[id]; });
+      if (need.length) {
+        var p = sb.storage.from(BUCKET).createSignedUrls(need, 7 * 86400).then(function (r) {
+          var exp = Date.now() + 7 * 86400 * 1000 - 3600 * 1000;
+          (r.data || []).forEach(function (x) { if (x.signedUrl && !x.error) URLS[x.path] = { u: x.signedUrl, e: exp }; });
+          saveUrls();
+        }).finally(function () { need.forEach(function (id) { delete inflight[id]; }); });
+        need.forEach(function (id) { inflight[id] = p; });
+      }
+      await Promise.all(ids.map(function (id) { return inflight[id]; }).filter(Boolean));
+      var out = {};
+      ids.forEach(function (id) { out[id] = assets.src(id); });
+      return out;
+    }
+  };
+
+  // ---------------- push: 휴대폰 알림 ----------------
+  var SW = null;
+  if ("serviceWorker" in navigator) {
+    SW = navigator.serviceWorker.register("sw.js").catch(function () { return null; });
+  }
+  function b64ToBytes(s) {
+    var pad = "=".repeat((4 - s.length % 4) % 4);
+    var raw = atob((s + pad).replace(/-/g, "+").replace(/_/g, "/"));
+    var out = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+  function isIos() { return /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1); }
+  function standalone() { return (window.matchMedia && matchMedia("(display-mode: standalone)").matches) || navigator.standalone === true; }
+  async function currentSub() {
+    var reg = SW && (await SW);
+    if (!reg || !reg.pushManager) return null;
+    return reg.pushManager.getSubscription();
+  }
+  async function saveSub(sub) {
+    var j = sub.toJSON();
+    var r = await sb.rpc("save_push_subscription", { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth });
+    if (r.error) throw mapErr(r.error);
+  }
+  // 로그인할 때마다 이 기기 구독을 지금 계정으로 다시 등록(기기를 다른 직원이 쓰게 된 경우 대비)
+  async function resaveSubscription() {
+    try { if (window.Notification && Notification.permission === "granted") { var s = await currentSub(); if (s) await saveSub(s); } } catch (e) { /* 다음에 */ }
+  }
+  async function disablePushQuietly() {
+    try { var s = await currentSub(); if (s) { await sb.rpc("delete_push_subscription", { p_endpoint: s.endpoint }); await s.unsubscribe(); } } catch (e) { /* 무시 */ }
+  }
+  var push = {
+    // on | off | denied | need-install(아이폰: 홈 화면에서 열어야 함) | unsupported
+    state: async function () {
+      if (isIos() && !standalone()) return "need-install";
+      if (!SW || !window.PushManager || !window.Notification) return "unsupported";
+      if (Notification.permission === "denied") return "denied";
+      var s = await currentSub().catch(function () { return null; });
+      return s && Notification.permission === "granted" ? "on" : "off";
+    },
+    enable: async function () {
+      var perm = await Notification.requestPermission();
+      if (perm !== "granted") throw err("denied");
+      var reg = await SW;
+      if (!reg) throw err("unsupported");
+      reg = await navigator.serviceWorker.ready;
+      var sub = await reg.pushManager.getSubscription() ||
+        await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(CFG.vapidPublic) });
+      await saveSub(sub);
+    },
+    disable: disablePushQuietly,
+    test: async function () {
+      var r = await sb.functions.invoke("push", { body: { type: "test" } });
+      if (r.error) throw err("unavailable", r.error);
+      return r.data;
+    },
+    isIos: isIos
+  };
+
+  // ---------------- bookings: 고객 예약 요청 ----------------
+  var BOOK = {
+    subs: new Set(),
+    timer: null,
+    schedule: function () { if (!BOOK.subs.size) return; clearTimeout(BOOK.timer); BOOK.timer = setTimeout(BOOK.run, 60); },
+    last: null,
+    run: async function () {
+      var r = await sb.from("booking_requests").select("*").eq("status", "new").order("created_at");
+      if (r.error) return;
+      var s = JSON.stringify(r.data);
+      if (s === BOOK.last) return;
+      BOOK.last = s;
+      var list = r.data.map(function (b) {
+        return { id: b.id, createdAt: b.created_at, name: b.name, phone: b.phone, address: b.address, moveTo: b.move_to, date: b.want_date, timeSlot: b.time_slot, items: b.items || [], note: b.note, photo: b.photo || "" };
+      });
+      BOOK.subs.forEach(function (f) { f(list); });
+    }
+  };
+  async function handleBooking(id, patch) {
+    var r = await sb.from("booking_requests").update(Object.assign({ handled_by: ACC && ACC.staffId, handled_at: new Date().toISOString() }, patch))
+      .eq("id", id).eq("status", "new").select("id");
+    if (r.error) throw mapErr(r.error);
+    BOOK.schedule();
+    return !!r.data.length;
+  }
+  var bookings = {
+    onSnapshot: function (next) {
+      BOOK.subs.add(next); BOOK.last = null; ensureChannel(); BOOK.schedule();
+      return function () { BOOK.subs.delete(next); };
+    },
+    accept: function (id, reservationId) { return handleBooking(id, { status: "accepted", reservation_id: reservationId }); },
+    reject: function (id) { return handleBooking(id, { status: "rejected" }); }
+  };
+
+  // 다른 사용자로: 로그아웃하고 사용자 고르는 화면으로(이 기기 알림 구독도 풀어 다른 사람에게 가지 않게)
+  async function switchUser() { return user.signOut(); }
+
+  function rpcOrThrow(name, args) {
+    return sb.rpc(name, args).then(function (r) { if (r.error) throw mapErr(r.error); return r.data; });
+  }
+  var admin = {
+    shopCode: function () { return rpcOrThrow("shop_code"); },
+    setShopCode: function (c) { return rpcOrThrow("set_shop_code", { p_code: c }).then(function () { saveCode(c); }); },
+    pushStatus: function () { return rpcOrThrow("push_status"); },
+    exportBackup: function () { return rpcOrThrow("export_backup"); }
+  };
+  var caps = { db: db, user: user, downloads: downloads, assets: assets, push: push, bookings: bookings, admin: admin };
+  window.claude = {
+    use: function (name) { return ready.then(function () { return caps[name] || null; }); }
+  };
+  sb.auth.onAuthStateChange(function (ev) { if (ev === "SIGNED_OUT" && ACC) location.replace(location.pathname); });
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start); else start();
+})();

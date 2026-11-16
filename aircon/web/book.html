@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>굿디클린 예약</title>
+<meta name="description" content="에어컨 분해세척 예약 요청">
+<meta name="theme-color" content="#00419B">
+<meta property="og:title" content="굿디클린 예약">
+<meta property="og:description" content="에어컨 분해세척 예약을 남겨 주시면 확인 후 연락드립니다.">
+<meta property="og:image" content="https://goodclean-aircon.pages.dev/icons/icon-512.png">
+<meta property="og:url" content="https://goodclean-aircon.pages.dev/book.html">
+<meta property="og:type" content="website">
+<link rel="icon" href="icons/icon-192.png" type="image/png">
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<style>
+:root {
+  --bg: #f2f6fc; --surface: #ffffff; --surface-2: #e8f0fb; --ink: #0e1f3d; --ink-2: #3d4f70; --ink-3: #697a96;
+  --line: #d5e0ef; --accent: #00419b; --accent-ink: #ffffff; --accent-soft: #e0ecfc; --bad: #c8372d; --good: #11804f;
+  --font: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #09111f; --surface: #111b2e; --surface-2: #1a2740; --ink: #e9effb; --ink-2: #a9b7d1; --ink-3: #7b8aa7;
+    --line: #253452; --accent: #4fa6ff; --accent-ink: #03152e; --accent-soft: #14305a; --bad: #ff7d74; --good: #4cc289;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #09111f; --surface: #111b2e; --surface-2: #1a2740; --ink: #e9effb; --ink-2: #a9b7d1; --ink-3: #7b8aa7;
+  --line: #253452; --accent: #4fa6ff; --accent-ink: #03152e; --accent-soft: #14305a; --bad: #ff7d74; --good: #4cc289;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font); font-size: 16px; line-height: 1.5; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.wrap { max-width: 560px; margin: 0 auto; padding: calc(16px + env(safe-area-inset-top, 0px)) 16px calc(32px + env(safe-area-inset-bottom, 0px)); }
+header { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+header img { width: 64px; height: 64px; border-radius: 14px; border: 1px solid var(--line); background: #fff; }
+h1 { margin: 0; font-size: 22px; }
+header p { margin: 2px 0 0; color: var(--ink-2); font-size: 14px; }
+form { display: grid; gap: 14px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: grid; gap: 12px; }
+.card h2 { margin: 0; font-size: 17px; }
+label, .lab { display: block; font-weight: 700; font-size: 15px; margin-bottom: 6px; }
+.req::after { content: " *"; color: var(--bad); }
+.req-mark { color: var(--bad); font-size: 14px; }
+.inp { width: 100%; height: 48px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 0 12px; }
+textarea.inp { height: 96px; padding: 10px 12px; resize: vertical; }
+.chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.slot-chips { margin-top: 8px; }
+.slot-chips .chip { min-height: 40px; padding: 0 12px; font-size: 15px; }
+.chip { min-height: 44px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); font-weight: 700; }
+/* 기기: 첫 줄 벽걸이·스탠드·2in1, 둘째 줄 천장형 1way·천장형 4way·업소용 */
+.ph-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.ph-pick label { min-height: 52px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); display: flex; align-items: center; justify-content: center; font-weight: 700; cursor: pointer; }
+.ph-pick input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.ph-prev { position: relative; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); background: var(--surface-2, #eef2f8); }
+.ph-prev img { display: block; width: 100%; max-height: 320px; object-fit: contain; }
+.type-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.type-grid .chip { padding: 0 4px; font-size: 15px; white-space: nowrap; }
+.chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.qty-row { display: flex; align-items: center; gap: 10px; justify-content: space-between; border-top: 1px solid var(--line); padding-top: 8px; }
+.qty { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.qty button { width: 44px; height: 40px; border: 0; background: var(--surface-2); font-size: 20px; font-weight: 700; }
+.qty span { min-width: 44px; text-align: center; font-weight: 700; }
+.err { color: var(--bad); font-size: 14px; font-weight: 600; margin-top: 4px; }
+.agree { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; color: var(--ink-2); }
+.agree input { width: 22px; height: 22px; margin-top: 2px; flex: none; }
+.submit { min-height: 56px; border: 0; border-radius: 12px; background: var(--accent); color: var(--accent-ink); font-size: 18px; font-weight: 800; }
+.submit:disabled { opacity: .6; }
+.hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+.done { text-align: center; display: grid; gap: 10px; padding: 24px 14px; }
+.done b { font-size: 20px; color: var(--good); }
+.muted { color: var(--ink-3); font-size: 13px; }
+.privacy-link { margin: -6px 0 0 32px; }
+.privacy-link a { color: var(--accent); font-weight: 700; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <img src="icons/icon-192.png" alt="굿디클린 로고">
+    <div><h1>굿디클린 예약</h1><p>에어컨 분해세척 전문. 남겨 주시면 확인 후 연락드려요.</p></div>
+  </header>
+
+  <form id="f" novalidate>
+    <div class="card">
+      <h2>어떤 에어컨인가요?</h2>
+      <div id="workBox"><span class="lab req">작업</span><div class="chips" id="works" role="group" aria-label="작업"></div></div>
+      <div><span class="lab req">기기 (여러 개 고를 수 있어요)</span><div class="type-grid" id="types" role="group" aria-label="기기 종류"></div>
+        <div id="qtys"></div><div class="err" id="e-items" hidden></div></div>
+    </div>
+
+    <div class="card" id="photoCard">
+      <h2>에어컨 사진 <span class="req-mark">(필수)</span></h2>
+      <p class="muted" style="margin:0">에어컨(실내기) <b>앞면 전체</b>가 보이게 1장 찍어 주세요. 모델 확인에 써요.</p>
+      <div class="ph-prev" id="phPrev" hidden><img id="phImg" alt="고른 에어컨 사진" data-testid="b-photo-preview"></div>
+      <div class="ph-pick">
+        <label><input type="file" accept="image/*" capture="environment" id="phCam" data-testid="b-photo-cam">카메라로 찍기</label>
+        <label><input type="file" accept="image/*" id="phFile" data-testid="b-photo">앨범에서 고르기</label>
+      </div>
+      <div class="err" id="e-photo" hidden></div>
+    </div>
+
+    <div class="card">
+      <h2>언제가 좋으세요?</h2>
+      <div><label class="req" for="date">희망 날짜</label><input class="inp" type="date" id="date" data-testid="b-date"><div class="err" id="e-date" hidden></div></div>
+      <div><label for="time">희망 시간</label>
+        <input class="inp" type="time" id="time" step="600" min="08:00" max="20:00" data-testid="b-time">
+        <div class="muted" style="margin-top:4px">오전 8시부터 오후 8시 사이로 골라 주세요.</div><div class="err" id="e-time" hidden></div>
+        <div class="chips slot-chips" id="slots" role="group" aria-label="자주 고르는 시간"></div></div>
+    </div>
+
+    <div class="card">
+      <h2>연락처와 주소</h2>
+      <div><label class="req" for="name">이름</label><input class="inp" id="name" autocomplete="name" maxlength="40" data-testid="b-name"><div class="err" id="e-name" hidden></div></div>
+      <div><label class="req" for="phone">연락처</label><input class="inp" id="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="20" placeholder="010-0000-0000" data-testid="b-phone"><div class="err" id="e-phone" hidden></div></div>
+      <div><label class="req" for="addr" id="addrLab">주소</label><input class="inp" id="addr" autocomplete="street-address" maxlength="200" placeholder="예: 수원시 영통구 ○○아파트 101동 1203호" data-testid="b-addr"><div class="err" id="e-address" hidden></div></div>
+      <div id="moveBox" hidden><label for="addr2">도착지 주소 (설치하는 곳)</label><input class="inp" id="addr2" maxlength="200" placeholder="예: 용인시 기흥구 ○○아파트 105동 701호" data-testid="b-addr2"></div>
+      <div><label for="note">요청사항</label><textarea class="inp" id="note" maxlength="1000" placeholder="층수, 엘리베이터, 주차, 설치 높이, 모델명 등" data-testid="b-note"></textarea></div>
+      <div class="hp" aria-hidden="true"><label for="website">웹사이트</label><input id="website" tabindex="-1" autocomplete="off"></div>
+    </div>
+
+    <label class="agree"><input type="checkbox" id="agree" data-testid="b-agree"><span>[필수] 예약 확인 연락을 위해 고객님의 이름, 연락처, 주소와 에어컨 사진을 받습니다. 작업이 끝난 뒤 5년간 보관하고 삭제됩니다.</span></label>
+    <p class="muted privacy-link"><a href="privacy.html" target="_blank" rel="noopener" data-testid="b-privacy">개인정보 처리 안내 보기</a> (보관 기간 · 삭제 요청 방법)</p>
+    <div class="err" id="e-form" hidden></div>
+    <button class="submit" id="send" type="submit" data-testid="b-send">예약 요청 보내기</button>
+    <p class="muted">요청만으로는 예약확정이 아닙니다. 직원이 확인후 전화나 문자로 확정 연락 드립니다.</p>
+  </form>
+
+  <div class="card done" id="done" hidden data-testid="b-done">
+    <b>예약 요청을 받았어요</b>
+    <p>확인 후 연락드릴게요. 감사합니다.</p>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="core.js"></script>
+<script>
+(function () {
+  "use strict";
+  var C = window.Core, CFG = window.WC_CONFIG || {};
+  var S = { work: C.WORKS[0], types: {} };
+  // 장부처럼 원하는 시간을 직접 고르고, 자주 고르는 시간은 버튼으로 바로
+  var QUICK = ["09:00", "10:00", "11:00", "13:00", "14:00", "15:00", "16:00", "17:00"];
+  function hourLabel(t) {
+    var h = +t.slice(0, 2), m = t.slice(3);
+    return (h < 12 ? "오전 " : "오후 ") + (h % 12 || 12) + "시" + (m !== "00" ? " " + +m + "분" : "");
+  }
+  function $(s) { return document.querySelector(s); }
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+  function chips(el, list, cur, attr) {
+    el.innerHTML = list.map(function (v) {
+      var on = typeof cur === "function" ? cur(v) : v === cur;
+      return '<button type="button" class="chip" ' + attr + '="' + esc(v) + '" aria-pressed="' + on + '">' + esc(v) + "</button>";
+    }).join("");
+  }
+  function render() {
+    chips($("#works"), C.WORKS, S.work, "data-work");
+    $("#workBox").hidden = C.WORKS.length < 2; // 분해세척 하나뿐이면 고를 필요 없음
+    chips($("#types"), C.TYPES, function (t) { return !!S.types[t]; }, "data-type");
+    var cur = $("#time").value;
+    $("#slots").innerHTML = QUICK.map(function (t) {
+      return '<button type="button" class="chip" data-slot="' + t + '" aria-pressed="' + (cur === t) + '">' + esc(hourLabel(t)) + "</button>";
+    }).join("") + '<button type="button" class="chip" data-slot="" aria-pressed="' + !cur + '" data-testid="b-anytime">상관없음</button>';
+    $("#qtys").innerHTML = Object.keys(S.types).map(function (t) {
+      return '<div class="qty-row"><span>' + esc(t) + '</span><span class="qty"><button type="button" data-q="-1" data-t="' + esc(t) + '" aria-label="' + esc(t) + ' 줄이기">−</button><span>' +
+        S.types[t] + '대</span><button type="button" data-q="1" data-t="' + esc(t) + '" aria-label="' + esc(t) + ' 늘리기">+</button></span></div>';
+    }).join("");
+    var mv = S.work === "이전설치";
+    $("#moveBox").hidden = !mv;
+    $("#addrLab").textContent = mv ? "출발지 주소 (철거하는 곳)" : "주소";
+  }
+  document.addEventListener("click", function (e) {
+    var t = e.target;
+    var w = t.closest("[data-work]"); if (w) { S.work = w.getAttribute("data-work"); render(); return; }
+    var ty = t.closest("[data-type]");
+    if (ty) { var k = ty.getAttribute("data-type"); if (S.types[k]) delete S.types[k]; else S.types[k] = 1; render(); return; }
+    var sl = t.closest("[data-slot]"); if (sl) { $("#time").value = sl.getAttribute("data-slot"); render(); return; }
+    var q = t.closest("[data-q]");
+    if (q) { var n = q.getAttribute("data-t"); S.types[n] = Math.max(1, Math.min(20, S.types[n] + +q.getAttribute("data-q"))); render(); }
+  });
+  var today = C.todayStr();
+  $("#date").min = today;
+  $("#date").max = C.addDays(today, 180);
+  $("#phone").addEventListener("blur", function () { this.value = C.formatPhone(this.value); });
+  $("#time").addEventListener("input", render);
+
+  // ---- 에어컨 사진(필수): 긴 변 1280px JPEG로 줄여서 올림 ----
+  function loadImg(file) {
+    if (window.createImageBitmap) return createImageBitmap(file, { imageOrientation: "from-image" }).catch(function () { return createImageBitmap(file); });
+    return new Promise(function (res, rej) {
+      var u = URL.createObjectURL(file), im = new Image();
+      im.onload = function () { URL.revokeObjectURL(u); res(im); }; im.onerror = function () { URL.revokeObjectURL(u); rej(new Error("decode")); };
+      im.src = u;
+    });
+  }
+  async function shrink(file) {
+    try {
+      var im = await loadImg(file), w0 = im.width || im.naturalWidth, h0 = im.height || im.naturalHeight;
+      var sc = Math.min(1, 1280 / Math.max(w0, h0)), cv = document.createElement("canvas");
+      cv.width = Math.max(1, Math.round(w0 * sc)); cv.height = Math.max(1, Math.round(h0 * sc));
+      cv.getContext("2d").drawImage(im, 0, 0, cv.width, cv.height);
+      var b = await new Promise(function (res) { cv.toBlob(res, "image/jpeg", 0.85); });
+      if (b && b.size) return b;
+    } catch (e) { /* 줄이지 못하면 원본 */ }
+    return file;
+  }
+  function onPhoto(e) {
+    var f = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    if (!/^image\//.test(f.type || "image/")) { showErr("photo", "사진 파일을 골라 주세요."); return; }
+    showErr("photo", "");
+    S.photo = f; S.photoId = null;
+    $("#phImg").src = URL.createObjectURL(f);
+    $("#phPrev").hidden = false;
+  }
+  $("#phCam").addEventListener("change", onPhoto);
+  $("#phFile").addEventListener("change", onPhoto);
+  async function uploadPhoto() {
+    if (S.photoId) return S.photoId;
+    var blob = await shrink(S.photo);
+    var r = await fetch(CFG.url + "/functions/v1/booking-photo", { method: "POST", headers: { apikey: CFG.key, "Content-Type": blob.type || "image/jpeg" }, body: blob });
+    var j = await r.json().catch(function () { return {}; });
+    if (!r.ok || !j.id) throw new Error(j.error || "upload");
+    S.photoId = j.id;
+    return j.id;
+  }
+
+  function showErr(k, msg) { var el = $("#e-" + k); if (!el) return; el.textContent = msg || ""; el.hidden = !msg; }
+  var MSG = {
+    name: "이름을 넣어 주세요.", phone: "연락처를 다시 확인해 주세요.", address: "주소를 넣어 주세요.",
+    date: "오늘부터 6개월 안의 날짜를 골라 주세요.", time: "오전 8시부터 오후 8시 사이로 골라 주세요.", too_many: "방금 요청을 보냈어요. 1분 뒤에 다시 보내 주세요.",
+    busy: "요청이 많아요. 잠시 뒤 다시 보내 주세요.",
+    photo: "에어컨 앞면 사진을 1장 올려 주세요."
+  };
+  $("#f").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    ["name", "phone", "address", "date", "time", "items", "photo", "form"].forEach(function (k) { showErr(k, ""); });
+    var body = {
+      name: $("#name").value.trim(), phone: C.formatPhone($("#phone").value.trim()), address: $("#addr").value.trim(),
+      moveTo: S.work === "이전설치" ? $("#addr2").value.trim() : "", date: $("#date").value,
+      timeSlot: /^\d{2}:\d{2}$/.test($("#time").value) ? $("#time").value : "",
+      items: Object.keys(S.types).map(function (t) { return { type: t, qty: S.types[t], work: S.work }; }),
+      note: $("#note").value.trim(), website: $("#website").value
+    };
+    var bad = null;
+    if (!body.items.length) { showErr("items", "기기를 하나 이상 골라 주세요."); bad = bad || "#types"; }
+    if (!S.photo) { showErr("photo", MSG.photo); bad = bad || "#photoCard"; }
+    if (!body.date || body.date < today) { showErr("date", MSG.date); bad = bad || "#date"; }
+    if (body.timeSlot && (body.timeSlot < "08:00" || body.timeSlot > "20:00")) { showErr("time", MSG.time); bad = bad || "#time"; }
+    if (!body.name) { showErr("name", MSG.name); bad = bad || "#name"; }
+    if (C.normalizePhone(body.phone).length < 9) { showErr("phone", MSG.phone); bad = bad || "#phone"; }
+    if (!body.address) { showErr("address", MSG.address); bad = bad || "#addr"; }
+    if (!$("#agree").checked) { showErr("form", "개인정보 수집에 동의해 주세요."); bad = bad || "#agree"; }
+    if (bad) { $(bad).scrollIntoView({ block: "center" }); return; }
+    $("#send").disabled = true; $("#send").textContent = "보내는 중…";
+    try {
+      $("#send").textContent = "사진 올리는 중…";
+      try { body.photo = await uploadPhoto(); } catch (pe) {
+        showErr("photo", /too_many/.test(pe.message) ? "사진을 너무 많이 올렸어요. 잠시 뒤 다시 해 주세요." : /too_large|not_image/.test(pe.message) ? "이 사진은 올릴 수 없어요. 다른 사진을 골라 주세요." : "사진을 올리지 못했어요. 인터넷 연결을 확인하고 다시 눌러 주세요.");
+        $("#photoCard").scrollIntoView({ block: "center" });
+        return;
+      }
+      $("#send").textContent = "보내는 중…";
+      var r = await fetch(CFG.url + "/rest/v1/rpc/submit_booking", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: CFG.key },
+        body: JSON.stringify({ p: body })
+      });
+      if (!r.ok) {
+        var j = await r.json().catch(function () { return {}; });
+        var code = j && j.message;
+        if (code === "photo") { S.photoId = null; showErr("photo", MSG.photo); }
+        else if (code === "name" || code === "phone" || code === "address" || code === "date" || code === "time") { showErr(code, MSG[code]); }
+        else showErr("form", MSG[code] || "보내지 못했어요. 인터넷 연결을 확인하고 다시 눌러 주세요.");
+        return;
+      }
+      $("#f").hidden = true; $("#done").hidden = false;
+      window.scrollTo(0, 0);
+    } catch (err) {
+      showErr("form", "보내지 못했어요. 인터넷 연결을 확인하고 다시 눌러 주세요.");
+    } finally {
+      $("#send").disabled = false; $("#send").textContent = "예약 요청 보내기";
+    }
+  });
+  render();
+})();
+</script>
+</body>
+</html>

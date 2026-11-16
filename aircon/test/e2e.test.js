@@ -1,0 +1,948 @@
+// node test/e2e.test.js  — 실제 화면을 브라우저로 조작해 주요 기능을 검증합니다.
+const http = require("http");
+const fs = require("fs");
+const path = require("path");
+const { chromium } = require(process.env.PLAYWRIGHT_PATH || "/opt/node22/lib/node_modules/playwright");
+const mockClaude = require("./mock-claude.js");
+
+const ROOT = path.join(__dirname, "..", "web");
+const SHOTS = process.env.SHOTS || path.join(__dirname, "shots");
+fs.mkdirSync(SHOTS, { recursive: true });
+
+const blobs = new Map(); // 가짜 asset 저장소 (/_blob/<id>)
+const server = http.createServer((req, res) => {
+  const u = req.url.split("?")[0];
+  // 실제처럼 바깥 페이지 안의 iframe에 앱을 띄움(뒤로가기 시험용)
+  if (u === "/start") { res.writeHead(200, { "content-type": "text/html; charset=utf-8" }); return res.end("<title>start</title><p>start</p>"); }
+  if (u === "/frame") {
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    return res.end('<!doctype html><title>host</title><body style="margin:0"><iframe id="app" src="/" style="border:0;width:100vw;height:100vh"></iframe></body>');
+  }
+  if (u === "/__blobcount") { res.writeHead(200); return res.end(String(blobs.size)); }
+  if (u.startsWith("/_blob/")) {
+    const id = u.slice(7);
+    if (req.method === "PUT") {
+      const chunks = [];
+      req.on("data", (c) => chunks.push(c));
+      req.on("end", () => { blobs.set(id, { type: req.headers["content-type"], buf: Buffer.concat(chunks) }); res.writeHead(200); res.end(); });
+      return;
+    }
+    if (req.method === "DELETE") { blobs.delete(id); res.writeHead(200); return res.end(); }
+    const b = blobs.get(id);
+    if (!b) { res.writeHead(404); return res.end(); }
+    res.writeHead(200, { "content-type": b.type });
+    return res.end(b.buf);
+  }
+  if (u === "/" || u === "/index.html") {
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    return res.end(fs.readFileSync(path.join(ROOT, "index.html"), "utf8"));
+  }
+  if (u === "/favicon.ico") { res.writeHead(204); return res.end(); }
+  // 가짜 claude 런타임으로 화면만 시험: 실제 Supabase 연결(supa-db.js)은 쓰지 않음
+  if (u === "/config.js") { res.writeHead(200, { "content-type": "text/javascript; charset=utf-8" }); return res.end("window.WC_CONFIG = null;"); }
+  const f = path.join(ROOT, path.normalize(u));
+  if (!f.startsWith(ROOT) || !fs.existsSync(f)) { res.writeHead(404); return res.end(); }
+  res.writeHead(200, { "content-type": f.endsWith(".js") ? "text/javascript; charset=utf-8" : f.endsWith(".webp") ? "image/webp" : f.endsWith(".png") ? "image/png" : f.endsWith(".webmanifest") ? "application/manifest+json" : "text/plain" });
+  res.end(fs.readFileSync(f));
+});
+
+let passed = 0, failed = 0;
+const failures = [];
+async function step(name, fn) {
+  try { await fn(); passed++; console.log("  ok  " + name); }
+  catch (e) { failed++; failures.push(name); console.log("  FAIL " + name + "\n       " + String(e.message || e).split("\n").slice(0, 4).join("\n       ")); }
+}
+function eq(a, b, msg) { if (a !== b) throw new Error((msg || "") + " 기대값=" + JSON.stringify(b) + " 실제=" + JSON.stringify(a)); }
+function ok(v, msg) { if (!v) throw new Error(msg || "조건 불충족"); }
+
+function pad(n) { return (n < 10 ? "0" : "") + n; }
+const now = new Date();
+const TODAY = now.getFullYear() + "-" + pad(now.getMonth() + 1) + "-" + pad(now.getDate());
+const YM = TODAY.slice(0, 7);
+const nm = new Date(now.getFullYear(), now.getMonth() + 1, 5);
+const NEXT_DAY = nm.getFullYear() + "-" + pad(nm.getMonth() + 1) + "-05";
+const NEXT_YM = NEXT_DAY.slice(0, 7);
+
+// 글꼴(Pretendard)은 CDN에서 받는데 시험 환경은 바깥 인터넷이 막혀 있어 빈 스타일로 대신함
+function stubFont(page) { return page.route("**/pretendard@*/**", (r) => r.fulfill({ contentType: "text/css", body: "/* font stub */" })); }
+async function newPage(ctx, cfg, errors) {
+  const page = await ctx.newPage();
+  await stubFont(page);
+  await page.addInitScript(mockClaude, cfg);
+  page.on("pageerror", (e) => errors.push("pageerror: " + e.message));
+  page.on("console", (m) => { if (m.type() === "error") errors.push("console: " + m.text()); });
+  page.on("response", (r) => { if (r.status() === 404) errors.push("404: " + r.url().replace(/^https?:\/\/[^/]+/, "") + " (" + (cfg && cfg.uid) + ")"); });
+  return page;
+}
+async function txt(page, sel) { return (await page.locator(sel).first().innerText()).trim(); }
+async function noHScroll(page) {
+  const r = await page.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]);
+  ok(r[0] <= r[1], "가로 스크롤 발생: " + r[0] + " > " + r[1]);
+}
+async function setTotal(page, v) { await page.fill("[data-testid=f-total]", ""); await page.type("[data-testid=f-total]", String(v)); }
+
+(async () => {
+  await new Promise((r) => server.listen(0, r));
+  const BASE = "http://127.0.0.1:" + server.address().port + "/";
+  const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome" }).catch(() => chromium.launch());
+  const errors = [];
+
+  // ---------------- 모바일 ----------------
+  console.log("모바일(390×844)");
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, locale: "ko-KR", timezoneId: "Asia/Seoul" });
+  const p1 = await newPage(ctx, { uid: "u_kim" }, errors);
+  await p1.goto(BASE);
+
+  await step("처음 접속 시 직원 명단 입력 → 이름 선택", async () => {
+    await p1.waitForSelector("[data-testid=setup-input]");
+    const names = ["김철수", "이영희", "박민수", "최지훈", "정수진"];
+    const inputs = p1.locator("[data-testid=setup-input]");
+    for (let i = 0; i < 5; i++) await inputs.nth(i).fill(names[i]);
+    await p1.click("[data-testid=setup-save]");
+    await p1.click("[data-testid=pick-김철수]");
+    await p1.waitForFunction(() => document.querySelector("#meName").textContent === "김철수님");
+  });
+
+  await step("빈 달 안내 문구", async () => {
+    await p1.waitForSelector("[data-testid=empty]");
+    ok((await txt(p1, "[data-testid=empty]")).includes("예약이 아직 없어요"));
+  });
+
+  await step("예약 등록(기기 2줄·대수·소요시간·금액)", async () => {
+    await p1.click("[data-testid=add]");
+    await p1.fill("[data-testid=f-phone]", "01012345678");
+    await p1.fill("[data-testid=f-name]", "홍길동");
+    await p1.fill("[data-testid=f-addr]", "서울 강남구 테헤란로 1, 101동 1203호");
+    await p1.fill("[data-testid=f-time]", "10:00");
+    await p1.click("button[data-f=dur][data-v='120']");
+    eq(await txt(p1, "[data-testid=end-time]"), "12:00", "종료시간");
+    await p1.selectOption("[data-testid=item] >> nth=0 >> [data-testid=item-type]", "통돌이");
+    await p1.fill("[data-testid=item] >> nth=0 >> [data-testid=item-model]", "WA16T6A10");
+    await p1.click("[data-testid=add-item]");
+    await p1.selectOption("[data-testid=item] >> nth=1 >> [data-testid=item-type]", "건조기");
+    await p1.click("[data-testid=item] >> nth=1 >> [data-testid=item-plus]");
+    eq(await p1.inputValue("[data-testid=item] >> nth=1 >> [data-testid=item-qty]"), "2", "대수 +");
+    await setTotal(p1, "150000");
+    eq(await p1.inputValue("[data-testid=f-total]"), "150,000", "금액 콤마");
+    const sw = await p1.evaluate(() => document.querySelector("[data-testid=save]").getBoundingClientRect().width);
+    ok(sw > 200, "저장 버튼이 너무 좁음: " + sw);
+    await p1.screenshot({ path: path.join(SHOTS, "m-form.png") });
+    await p1.click("[data-testid=save]");
+    await p1.waitForSelector("#sheet[hidden]", { state: "attached" });
+    await p1.waitForSelector("[data-testid=card]");
+  });
+
+  await step("목록 카드에 시간·고객·기기·금액·참여자 표시", async () => {
+    const card = p1.locator("[data-testid=card]").first();
+    await card.locator(".c-name").click(); // 눌러서 펼치면 주소·금액·모델까지
+    await card.locator("[data-testid=card-more]:not([hidden])").waitFor();
+    const t = await card.innerText();
+    for (const s of ["10:00", "~12:00", "2시간", "홍길동", "통돌이 1대", "건조기 2대", "세척", "WA16T6A10", "150,000원", "010-1234-5678", "테헤란로", "김철수", "1/2명"]) ok(t.includes(s), "카드에 '" + s + "' 없음:\n" + t);
+  });
+
+  await step("상단 요약: 1건 · 150,000원", async () => {
+    eq(await txt(p1, "[data-testid=top-count]"), "1건");
+    eq(await txt(p1, "[data-testid=top-revenue]"), "150,000원");
+  });
+
+  await step("통계 반영(예정 매출·기기별 대수)", async () => {
+    await p1.click("[data-testid=tab-stats]");
+    eq(await txt(p1, "[data-testid=st-count]"), "1건");
+    eq(await txt(p1, "[data-testid=st-total]"), "150,000원");
+    eq(await txt(p1, "[data-testid=st-done]"), "0원");
+    eq(await txt(p1, "[data-testid=by-type] [data-type='통돌이']"), "1대");
+    eq(await txt(p1, "[data-testid=by-type] [data-type='건조기']"), "2대");
+    ok(await p1.locator("[data-testid=year-chart] svg path").count() >= 1, "그래프 막대 없음");
+    const fillW = await p1.evaluate(() => document.querySelector("[data-testid=by-type] .fill").getBoundingClientRect().width);
+    ok(fillW > 20, "기기별 막대가 채워지지 않음: " + fillW);
+    const ticks = await p1.$$eval("[data-testid=year-chart] svg text", (ts) => ts.map((t) => t.textContent).filter((x) => /만$|^0$/.test(x)));
+    ok(ticks.every((x) => /^(0|\d+(\.5)?만)$/.test(x)), "눈금 값: " + ticks.join(","));
+  });
+
+  await step("예약 수정(금액·완료·입금) → 통계 재반영", async () => {
+    await p1.click("[data-testid=tab-list]");
+    await p1.click("[data-testid=card] [data-act=detail]");
+    await setTotal(p1, "180000");
+    await p1.click("button[data-f=status][data-v=done]");
+    await p1.click("button[data-f=method][data-v='카드']");
+    await p1.check("[data-testid=f-paid]");
+    await p1.click("[data-testid=save]");
+    await p1.waitForSelector("#sheet[hidden]", { state: "attached" });
+    await p1.waitForFunction(() => document.querySelector("[data-testid=card-amt]").textContent === "180,000원");
+    await p1.click("[data-testid=tab-stats]");
+    eq(await txt(p1, "[data-testid=st-done]"), "180,000원");
+    eq(await txt(p1, "[data-testid=st-total]"), "180,000원");
+    eq(await txt(p1, "[data-testid=st-unpaid]"), "0원");
+  });
+
+  await step("시간 겹침 경고(같은 직원·겹치는 시간)", async () => {
+    await p1.click("[data-testid=tab-list]");
+    await p1.click("[data-testid=add]");
+    await p1.fill("[data-testid=f-phone]", "010-9876-5432");
+    await p1.fill("[data-testid=f-name]", "이순신");
+    await p1.fill("[data-testid=f-addr]", "수원시 영통구 1");
+    await p1.fill("[data-testid=f-time]", "11:00");
+    await p1.click("button[data-f=dur][data-v='60']");
+    await p1.selectOption("[data-testid=item] >> nth=0 >> [data-testid=item-type]", "LG 2단");
+    await p1.selectOption("[data-testid=item] >> nth=0 >> [data-testid=item-work]", "이전설치");
+    await setTotal(p1, "120000");
+    await p1.click("button[data-f=needed][data-v='3']");
+    await p1.waitForSelector("[data-testid=form-conflict]");
+    ok((await txt(p1, "[data-testid=form-conflict]")).includes("김철수"), "겹침 문구에 직원 이름");
+    await p1.click("[data-testid=save]");
+    await p1.waitForSelector("#sheet[hidden]", { state: "attached" });
+    await p1.waitForFunction(() => document.querySelectorAll("[data-testid=card]").length === 2);
+    eq(await p1.locator(".card [data-testid=conflict]").count(), 2, "두 카드 모두 경고");
+  });
+
+  await step("여러 직원이 동시에 참여 체크해도 모두 남음(실시간 공유)", async () => {
+    const p2 = await newPage(ctx, { uid: "u_lee" }, errors);
+    const p3 = await newPage(ctx, { uid: "u_park" }, errors);
+    for (const [p, n] of [[p2, "이영희"], [p3, "박민수"]]) {
+      await p.goto(BASE);
+      await p.click("[data-testid=pick-" + n + "]");
+      await p.waitForSelector("[data-testid=card]");
+    }
+    // 이순신(11:00, 예약 상태) 카드의 [참여] 동시 클릭
+    const card = ".card:has(.c-name:text-is('이순신'))";
+    const sel = card + " [data-testid=rsvp-yes]";
+    await Promise.all([p2.click(sel), p3.click(sel)]);
+    await p1.waitForFunction(() => {
+      const c = [...document.querySelectorAll(".card")].find((x) => x.querySelector(".c-name").textContent === "이순신");
+      return c && c.textContent.includes("이영희") && c.textContent.includes("박민수") && c.textContent.includes("3/3명");
+    }, null, { timeout: 4000 });
+    // 같은 버튼을 다시 누르면 참여 취소
+    eq(await p2.getAttribute(sel, "aria-pressed"), "true", "내 응답 표시");
+    await p2.click(sel);
+    await p1.waitForFunction(() => {
+      const c = [...document.querySelectorAll(".card")].find((x) => x.querySelector(".c-name").textContent === "이순신");
+      return c && !c.textContent.includes("이영희") && c.textContent.includes("2/3명");
+    }, null, { timeout: 4000 });
+    // 보류·불참은 이름 옆에 표시되고 인원에는 안 셈
+    await p2.click(card + " [data-testid=rsvp-maybe]");
+    await p1.waitForFunction(() => {
+      const c = [...document.querySelectorAll(".card")].find((x) => x.querySelector(".c-name").textContent === "이순신");
+      return c && c.textContent.includes("이영희 보류") && c.textContent.includes("2/3명");
+    }, null, { timeout: 4000 });
+    await p2.click(card + " [data-testid=rsvp-no]");
+    await p1.waitForFunction(() => {
+      const c = [...document.querySelectorAll(".card")].find((x) => x.querySelector(".c-name").textContent === "이순신");
+      return c && c.textContent.includes("이영희 불참") && !c.textContent.includes("이영희 보류");
+    }, null, { timeout: 4000 });
+    await p1.screenshot({ path: path.join(SHOTS, "m-rsvp.png") });
+    // 박민수 '내 일정'
+    await p3.click("[data-testid=filter-mine]");
+    eq(await p3.locator("[data-testid=card]").count(), 1, "박민수 내 일정");
+    await p2.close(); await p3.close();
+  });
+
+  await step("빠른 완료·입금확인 → 미수금 집계", async () => {
+    const card = ".card:has(.c-name:text-is('이순신'))";
+    await p1.click(card + " [data-testid=quick-done]");
+    await p1.waitForSelector(card + " [data-testid=quick-paid]");
+    await p1.click("[data-testid=tab-stats]");
+    eq(await txt(p1, "[data-testid=st-unpaid]"), "120,000원");
+    eq(await txt(p1, "[data-testid=st-done]"), "300,000원");
+    await p1.click("[data-testid=tab-list]");
+    await p1.click("[data-testid=filter-unpaid]");
+    eq(await p1.locator("[data-testid=card]").count(), 1);
+    await p1.click(card + " [data-testid=quick-paid]");
+    await p1.waitForSelector("[data-testid=empty]");
+    await p1.click("[data-testid=filter-all]");
+    await p1.click("[data-testid=tab-stats]");
+    eq(await txt(p1, "[data-testid=st-unpaid]"), "0원");
+    eq(await txt(p1, "[data-testid=by-staff]").then((t) => /김철수\s+2건/.test(t)), true, "직원별 참여 2건");
+  });
+
+  await step("다른 달 예약은 그 달에만 집계", async () => {
+    await p1.click("[data-testid=tab-list]");
+    await p1.click("[data-testid=add]");
+    await p1.fill("[data-testid=f-date]", NEXT_DAY);
+    await p1.fill("[data-testid=f-name]", "강감찬");
+    await p1.fill("[data-testid=f-phone]", "01055556666");
+    await p1.selectOption("[data-testid=item] >> nth=0 >> [data-testid=item-type]", "빌트인");
+    await setTotal(p1, "90000");
+    await p1.click("[data-testid=save]");
+    await p1.waitForSelector("#sheet[hidden]", { state: "attached" });
+    await p1.waitForFunction((ym) => document.querySelector("[data-testid=month-label]").textContent.includes(+ym.slice(5) + "월"), NEXT_YM);
+    await p1.waitForFunction(() => document.querySelector("[data-testid=top-count]").textContent === "1건");
+    eq(await txt(p1, "[data-testid=top-revenue]"), "90,000원");
+    await p1.click("[data-testid=prev-month]");
+    await p1.waitForFunction(() => document.querySelector("[data-testid=top-count]").textContent === "2건");
+    eq(await txt(p1, "[data-testid=top-revenue]"), "300,000원");
+  });
+
+  await step("달력: 오늘 칸 건수 → 누르면 그날 예약", async () => {
+    await p1.click("[data-testid=tab-cal]");
+    const cell = "[data-testid=day-" + TODAY + "]";
+    ok((await txt(p1, cell)).includes("2건"), "오늘 칸 2건");
+    await p1.click(cell);
+    eq(await p1.locator("[data-testid=cal-day-list] [data-testid=card]").count(), 2);
+    await noHScroll(p1);
+    await p1.screenshot({ path: path.join(SHOTS, "m-cal.png") });
+  });
+
+  await step("고객 이력: 전화번호로 이전 작업 불러오기", async () => {
+    await p1.click("[data-testid=tab-list]");
+    await p1.click("[data-testid=add]");
+    await p1.fill("[data-testid=f-phone]", "010-1234-5678");
+    await p1.waitForSelector("[data-testid=history]");
+    ok((await txt(p1, "[data-testid=history]")).includes("이전 작업 1건"));
+    await p1.click("[data-testid=fill-history]");
+    eq(await p1.inputValue("[data-testid=f-name]"), "홍길동");
+    ok((await p1.inputValue("[data-testid=f-addr]")).includes("테헤란로"));
+    await p1.click("#sheet [data-x] >> nth=0");
+    await p1.waitForSelector("#sheet[hidden]", { state: "attached" });
+  });
+
+  await step("입력 검사: 고객 정보 없으면 저장 안 됨", async () => {
+    const before = await p1.locator("[data-testid=card]").count();
+    await p1.click("[data-testid=add]");
+    await p1.click("[data-testid=save]");
+    ok((await p1.locator("#sheet .err").innerText()).includes("고객 이름이나 전화번호"));
+    await p1.click("#sheet [data-x] >> nth=0");
+    eq(await p1.locator("[data-testid=card]").count(), before);
+  });
+
+  await step("검색(올해 전체)", async () => {
+    await p1.fill("[data-testid=search]", "강감찬");
+    eq(await p1.locator("[data-testid=card]").count(), 1);
+    await p1.fill("[data-testid=search]", "5432");
+    eq(await p1.locator("[data-testid=card]").count(), 1);
+    await p1.fill("[data-testid=search]", "");
+  });
+
+  await step("엑셀(CSV) 내보내기 내용", async () => {
+    await p1.click("[data-testid=tab-stats]");
+    await p1.click("[data-testid=csv]");
+    await p1.waitForFunction(() => window.__saved.length === 1);
+    const f = await p1.evaluate(() => window.__saved[0]);
+    eq(f.filename, "예약내역_" + YM + ".csv");
+    ok(f.data.startsWith("﻿예약일자"), "BOM/헤더");
+    ok(f.data.includes("홍길동") && f.data.includes("180000") && f.data.includes("이순신"), "행 내용");
+    ok(!f.data.includes("강감찬"), "다른 달 제외");
+    eq(f.data.trim().split("\r\n").length, 3, "헤더+2행");
+  });
+
+  await step("모바일 화면 가로 스크롤 없음(모든 탭)", async () => {
+    for (const t of ["list", "cal", "stats", "settings"]) { await p1.click("[data-testid=tab-" + t + "]"); await noHScroll(p1); }
+    await p1.click("[data-testid=tab-stats]");
+    await p1.screenshot({ path: path.join(SHOTS, "m-stats.png"), fullPage: true });
+    await p1.click("[data-testid=tab-list]");
+    await p1.screenshot({ path: path.join(SHOTS, "m-list.png") });
+  });
+
+  await step("로고·앱 이름·개발자 표시, 이미지 로드", async () => {
+    eq(await p1.title(), "굿디클린");
+    eq((await txt(p1, ".word")).replace(/\s+/g, " "), "굿디클린");
+    await p1.click("[data-testid=tab-settings]");
+    ok((await txt(p1, "[data-testid=about]")).includes("개발 · 신창민"));
+    const imgs = await p1.$$eval("img", (xs) => xs.map((i) => [i.getAttribute("src"), i.complete && i.naturalWidth > 0]));
+    ok(imgs.length >= 2 && imgs.every((x) => x[1]), "이미지 로드 실패: " + JSON.stringify(imgs));
+    const font = await p1.evaluate(() => getComputedStyle(document.body).fontFamily);
+    ok(font.startsWith('"Pretendard Variable"'), font);
+    await p1.screenshot({ path: path.join(SHOTS, "m-settings.png"), fullPage: true });
+  });
+
+  await step("직원 명단 수정 → 카드 이름 반영", async () => {
+    await p1.click("[data-testid=tab-settings]");
+    await p1.locator("[data-testid=staff-input]").nth(2).fill("박민호");
+    await p1.click("[data-testid=staff-save]");
+    await p1.click("[data-testid=tab-list]");
+    await p1.waitForFunction(() => document.body.innerText.includes("박민호"));
+  });
+
+  await step("예약 삭제 → 목록·통계 감소", async () => {
+    await p1.click(".card:has(.c-name:text-is('홍길동')) [data-act=detail]");
+    await p1.click("[data-testid=del]");
+    await p1.click("[data-testid=del-yes]");
+    await p1.waitForFunction(() => document.querySelectorAll("[data-testid=card]").length === 1);
+    eq(await txt(p1, "[data-testid=top-count]"), "1건");
+    eq(await txt(p1, "[data-testid=top-revenue]"), "120,000원");
+    await p1.click("[data-testid=tab-stats]");
+    eq(await txt(p1, "[data-testid=st-done]"), "120,000원");
+    eq(await txt(p1, "[data-testid=by-type] [data-type='통돌이']"), "0대");
+  });
+
+  await step("다른 사람이 먼저 고친 예약은 덮어쓰기 전에 경고", async () => {
+    await p1.click("[data-testid=tab-list]");
+    await p1.click(".card:has(.c-name:text-is('이순신')) [data-act=detail]");
+    // 다른 사람이 넣은 예약은 사장님만 고칠 수 있으므로 사장님 계정으로 동시 수정
+    const p2 = await newPage(ctx, { uid: "u_boss", owner: true }, errors);
+    await p2.goto(BASE);
+    await p2.click("[data-testid=pick-이영희]");
+    await p2.waitForSelector(".card:has(.c-name:text-is('이순신'))");
+    await p2.click(".card:has(.c-name:text-is('이순신')) [data-act=detail]");
+    await setTotal(p2, "130000");
+    await p2.click("[data-testid=save]");
+    await p2.waitForSelector("#sheet[hidden]", { state: "attached" });
+    await p1.waitForSelector("[data-testid=stale]");
+    ok((await txt(p1, "[data-testid=stale]")).includes("이영희"), "누가 고쳤는지 표시");
+    await p1.click("[data-testid=save]");      // 첫 클릭: 경고만
+    ok(await p1.isVisible("#sheet .sheet-in"), "첫 저장은 막힘");
+    await p1.click("[data-testid=save]");      // 두 번째: 저장
+    await p1.waitForSelector("#sheet[hidden]", { state: "attached" });
+    await p2.close();
+  });
+
+  await step("자정 넘김·직접 입력 소요시간", async () => {
+    await p1.click("[data-testid=add]");
+    await p1.fill("[data-testid=f-time]", "22:00");
+    await p1.click("button[data-f=dur][data-v=custom]");
+    await p1.fill("[data-testid=f-durmin]", "150");
+    eq(await txt(p1, "[data-testid=end-time]"), "00:30 (다음날)");
+    await p1.click("#sheet [data-x] >> nth=0");
+  });
+  await ctx.close();
+
+  // ---------------- PC ----------------
+  console.log("PC(1280×800)");
+  const ctxD = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "ko-KR", timezoneId: "Asia/Seoul" });
+  const d1 = await newPage(ctxD, { uid: "u_kim" }, errors);
+  await d1.goto(BASE);
+  await step("PC 첫 설정 후 표 형태 목록", async () => {
+    await d1.waitForSelector("[data-testid=setup-input]");
+    await d1.locator("[data-testid=setup-input]").nth(0).fill("김철수");
+    await d1.locator("[data-testid=setup-input]").nth(1).fill("이영희");
+    await d1.click("[data-testid=setup-save]");
+    await d1.click("[data-testid=pick-김철수]");
+    await d1.click("[data-testid=add]");
+    await d1.fill("[data-testid=f-name]", "PC고객");
+    await d1.fill("[data-testid=f-phone]", "0212345678");
+    await d1.fill("[data-testid=f-addr]", "서울 중구 세종대로 110");
+    await setTotal(d1, "95000");
+    await d1.click("[data-testid=save]");
+    await d1.waitForSelector("table.tbl tr.row");
+    const t = await d1.locator("table.tbl tr.row").first().innerText();
+    ok(t.includes("PC고객") && t.includes("02-1234-5678") && t.includes("95,000원"), t);
+    await noHScroll(d1);
+    await d1.screenshot({ path: path.join(SHOTS, "d-list.png") });
+    await d1.click("[data-testid=tab-stats]");
+    await noHScroll(d1);
+    await d1.screenshot({ path: path.join(SHOTS, "d-stats.png"), fullPage: true });
+    await d1.click("[data-testid=tab-cal]");
+    await d1.screenshot({ path: path.join(SHOTS, "d-cal.png") });
+  });
+  await ctxD.close();
+
+  // ---------------- 권한·연결 ----------------
+  console.log("권한·연결 상태");
+  await step("보기 전용: 안내 표시, 추가 버튼 숨김, 버튼 없음", async () => {
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const p = await newPage(c, { uid: "u_view", readOnly: true }, errors);
+    await p.goto(BASE);
+    await p.evaluate(() => {
+      localStorage.setItem("mockdb", JSON.stringify({
+        "config/staff": { list: [{ id: "s1", name: "김철수" }] },
+        "reservations/r1": { date: new Date().toISOString().slice(0, 8) + "15", time: "09:00", durationMin: 60, status: "scheduled", customer: { name: "보기고객", phone: "", address: "" }, items: [{ type: "통돌이", qty: 1, work: "세척" }], total: 50000, payment: { method: "미정", paid: false }, workers: {} }
+      }));
+      localStorage.setItem("wb.staffId.u_view", "s1");
+    });
+    await p.reload();
+    await p.waitForSelector(".banner");
+    ok((await txt(p, ".banner")).includes("보기 전용"));
+    ok(!(await p.isVisible("[data-testid=add]")), "추가 버튼 숨김");
+    await p.waitForSelector("[data-testid=card]");
+    eq(await p.locator("[data-testid=rsvp-yes]").count(), 0, "참여 버튼 숨김");
+    await c.close();
+  });
+  await step("공유 저장소 없음: 안내 표시, 오류 없이 동작", async () => {
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const p = await newPage(c, { noClaude: true }, errors);
+    await p.goto(BASE);
+    await p.waitForSelector(".banner");
+    ok((await txt(p, ".banner")).includes("연결되지 않았어요"));
+    await p.click("[data-testid=tab-stats]");
+    eq(await txt(p, "[data-testid=st-count]"), "0건");
+    await c.close();
+  });
+
+  // ---------------- 내비 ----------------
+  console.log("주소 → 내비 앱");
+  const NAV_ADDR = "서울 강남구 테헤란로 1, 101동 1203호";
+  const NAV_ENC = encodeURIComponent(NAV_ADDR);
+  async function navPage(ua, viewport) {
+    const c = await browser.newContext({ viewport: viewport || { width: 390, height: 844 }, userAgent: ua, hasTouch: !!ua, permissions: ["clipboard-read", "clipboard-write"] });
+    const p = await newPage(c, { uid: "u_nav" }, errors);
+    await p.goto(BASE);
+    await p.evaluate((addr) => {
+      localStorage.setItem("mockdb", JSON.stringify({
+        "config/staff": { list: [{ id: "s1", name: "김철수" }] },
+        "reservations/r1": { date: new Date().toISOString().slice(0, 10), time: "09:00", durationMin: 60, status: "scheduled", customer: { name: "내비고객", phone: "01011112222", address: addr }, site: { floor: "12", elevator: "있음", parking: "", memo: "" }, items: [{ type: "통돌이", qty: 1, work: "세척" }], total: 50000, payment: { method: "미정", paid: false }, workers: { s1: true } }
+      }));
+      localStorage.setItem("wb.staffId.u_nav", "s1");
+    }, NAV_ADDR);
+    await p.reload();
+    // 테스트 중 실제 앱 링크로 이동하지 않도록(앱 쪽 클릭 처리는 그대로 실행)
+    await p.evaluate(() => document.addEventListener("click", (e) => { if (e.target.closest("[data-nav]")) e.preventDefault(); }));
+    await p.waitForSelector("[data-testid=card]");
+    return { c, p };
+  }
+  const openAddr = async (p) => { await p.click("[data-testid=card] :is([data-act=nav], [data-act=addr])"); await p.waitForSelector("#modal .modal-in"); };
+
+  await step("Android: 티맵이 맨 위, intent 링크에 주소 포함", async () => {
+    const { c, p } = await navPage("Mozilla/5.0 (Linux; Android 14; SM-S918N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36");
+    await openAddr(p);
+    eq(await p.getAttribute("#modal .nav-main", "data-nav"), "tmap", "맨 위 버튼");
+    const href = await p.getAttribute("[data-testid=nav-tmap]", "href");
+    ok(href.startsWith("intent://search?name=" + NAV_ENC + "#Intent;scheme=tmap;package=com.skt.tmap.ku"), href);
+    ok((await txt(p, "#modal")).includes("12층 · 엘리베이터 있음"), "현장 정보 표시");
+    await p.click("[data-testid=nav-kakaonavi]");
+    await p.waitForFunction(() => document.querySelector("#toast").textContent.includes("카카오내비 검색창"));
+    eq(await p.evaluate(() => navigator.clipboard.readText()), NAV_ADDR, "클립보드에 주소");
+    await p.screenshot({ path: path.join(SHOTS, "m-nav.png") });
+    // 설정에서 내 내비 앱을 카카오내비로 바꾸면 맨 위가 바뀜
+    await p.click("#modal", { position: { x: 10, y: 10 } });
+    await p.click("[data-testid=tab-settings]");
+    await p.click("[data-navpref=kakaonavi]");
+    eq(await p.getAttribute("[data-navpref=kakaonavi]", "aria-pressed"), "true");
+    await p.click("[data-testid=tab-list]");
+    await openAddr(p);
+    eq(await p.getAttribute("#modal .nav-main", "data-nav"), "kakaonavi", "설정 후 맨 위 버튼");
+    await noHScroll(p);
+    await c.close();
+  });
+  await step("iPhone: tmap:// 주소 검색 링크", async () => {
+    const { c, p } = await navPage("Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1");
+    await openAddr(p);
+    eq(await p.getAttribute("#modal .nav-main", "href"), "tmap://search?name=" + NAV_ENC);
+    eq(await p.getAttribute("[data-testid=nav-kakaomap]", "href"), "kakaomap://search?q=" + NAV_ENC);
+    await c.close();
+  });
+  await step("PC: 웹 지도 버튼만", async () => {
+    const { c, p } = await navPage(undefined, { width: 1280, height: 800 });
+    await openAddr(p);
+    eq(await p.locator("[data-testid=nav-tmap]").count(), 0);
+    eq(await p.getAttribute("[data-testid=web-kakaomap]", "href"), "https://map.kakao.com/link/search/" + NAV_ENC);
+    await c.close();
+  });
+
+  // ---------------- 작업 사진 · 이전설치 ----------------
+  console.log("작업 사진 · 이전설치");
+  {
+    const ctxP = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true });
+    const owner = await newPage(ctxP, { uid: "u_owner", owner: true }, errors);
+    await owner.goto(BASE);
+    await owner.evaluate(() => {
+      localStorage.clear();
+      localStorage.setItem("mockdb", JSON.stringify({
+        "config/staff": { list: [{ id: "s1", name: "김철수" }, { id: "s2", name: "이영희" }] },
+        "reservations/rp": { date: new Date().toISOString().slice(0, 10), time: "13:00", durationMin: 120, status: "scheduled", customer: { name: "사진고객", phone: "01033334444", address: "수원시 영통구 1" }, site: {}, items: [{ type: "통돌이", qty: 1, work: "세척" }], total: 80000, payment: { method: "미정", paid: false }, workers: { s1: true } }
+      }));
+      localStorage.setItem("wb.staffId.u_owner", "s1");
+      localStorage.setItem("wb.staffId.u_lee", "s2");
+      localStorage.setItem("wb.staffId.u_view", "s2");
+    });
+    await owner.reload();
+    await owner.waitForSelector("[data-testid=card]");
+    const mkPng = (w, h, color) => owner.evaluate(([w, h, color]) => {
+      const c = document.createElement("canvas"); c.width = w; c.height = h;
+      const x = c.getContext("2d"); x.fillStyle = color; x.fillRect(0, 0, w, h); x.fillStyle = "#fff"; x.fillRect(w / 4, h / 4, w / 2, h / 2);
+      return c.toDataURL("image/png").split(",")[1];
+    }, [w, h, color]).then((b64) => Buffer.from(b64, "base64"));
+    const big = await mkPng(3000, 2000, "#0693f8");
+    const small1 = await mkPng(800, 600, "#00419b");
+    const small2 = await mkPng(600, 800, "#17784a");
+    const imgsLoaded = (p, sel) => p.waitForFunction((sel) => { const xs = [...document.querySelectorAll(sel)]; return xs.length && xs.every((i) => i.complete && i.naturalWidth > 0); }, sel);
+
+    await step("사진 추가: 큰 사진은 1280px JPEG로 줄여서 올림", async () => {
+      eq(await txt(owner, "[data-testid=photos-btn]"), "사진");
+      await owner.click("[data-testid=photos-btn]");
+      await owner.setInputFiles("[data-testid=file-before]", { name: "before.png", mimeType: "image/png", buffer: big });
+      await owner.waitForFunction(() => document.querySelectorAll("[data-testid=grid-before] .ph[data-pv] img").length === 1 && !document.querySelector("[data-testid=pending]"));
+      await imgsLoaded(owner, "[data-testid=grid-before] img");
+      await owner.click("[data-testid=grid-before] .ph[data-pv]");
+      await imgsLoaded(owner, "[data-testid=photo-big]");
+      const dim = await owner.evaluate(() => { const i = document.querySelector("[data-testid=photo-big]"); return [i.naturalWidth, i.naturalHeight]; });
+      eq(dim.join("x"), "1280x853", "줄인 크기");
+      const type = await owner.evaluate(() => fetch(document.querySelector("[data-testid=photo-big]").src).then((r) => r.headers.get("content-type")));
+      eq(type, "image/jpeg");
+      ok((await txt(owner, "#modal")).includes("김철수"), "올린 사람 표시");
+      await owner.click("[data-pback]");
+    });
+    await step("작업 후 사진 2장 한 번에 → 카드에 '사진 3'", async () => {
+      await owner.setInputFiles("[data-testid=file-after]", [
+        { name: "a1.png", mimeType: "image/png", buffer: small1 }, { name: "a2.png", mimeType: "image/png", buffer: small2 }]);
+      await owner.waitForFunction(() => document.querySelectorAll("[data-testid=grid-after] .ph[data-pv] img").length === 2 && !document.querySelector("[data-testid=pending]"));
+      await imgsLoaded(owner, "[data-testid=grid-after] img");
+      await noHScroll(owner);
+      await owner.screenshot({ path: path.join(SHOTS, "m-photos.png") });
+      await owner.click("[data-pclose]");
+      await owner.waitForFunction(() => document.querySelector("[data-testid=photos-btn]").textContent.includes("사진 3"));
+    });
+    const staff = await newPage(ctxP, { uid: "u_lee" }, errors);
+    await staff.goto(BASE);
+    await step("다른 직원 화면에도 사진이 보이고, 남의 사진은 못 지움", async () => {
+      await staff.waitForFunction(() => (document.querySelector("[data-testid=photos-btn]") || {}).textContent === "사진 3");
+      await staff.click("[data-testid=photos-btn]");
+      await imgsLoaded(staff, "#modal .ph img");
+      await staff.click("[data-testid=grid-before] .ph[data-pv]");
+      await staff.click("[data-testid=photo-del]");
+      await staff.click("[data-testid=photo-del-yes]");
+      await staff.waitForFunction(() => document.querySelector("#toast").textContent.includes("올린 사람이나 사장님만"));
+      await staff.click("[data-pback]");
+      eq(await staff.locator("[data-testid=grid-before] img").count(), 1, "사진 남아 있음");
+    });
+    await step("직원이 올린 사진: 사장님 화면에 실시간 반영, 본인은 삭제 가능", async () => {
+      await staff.setInputFiles("[data-testid=file-after]", { name: "s.png", mimeType: "image/png", buffer: small1 });
+      await staff.waitForFunction(() => document.querySelectorAll("[data-testid=grid-after] .ph[data-pv] img").length === 3 && !document.querySelector("[data-testid=pending]"));
+      await owner.waitForFunction(() => document.querySelector("[data-testid=photos-btn]").textContent.includes("사진 4"));
+      await staff.click("[data-testid=grid-after] .ph[data-pv] >> nth=2");
+      await staff.click("[data-testid=photo-del]");
+      await staff.click("[data-testid=photo-del-yes]");
+      await staff.waitForFunction(() => document.querySelectorAll("[data-testid=grid-after] img").length === 2);
+      await owner.waitForFunction(() => document.querySelector("[data-testid=photos-btn]").textContent.includes("사진 3"));
+      await staff.click("[data-pclose]");
+    });
+    await step("여러 장 한꺼번에: 바로 미리보기, 8장씩 동시에 올라감, 빠짐없이 저장", async () => {
+      const slow = await newPage(ctxP, { uid: "u_lee", uploadDelay: 600 }, errors);
+      await slow.goto(BASE);
+      await slow.waitForSelector("[data-testid=photos-btn]");
+      await slow.click("[data-testid=photos-btn]");
+      eq(await slow.locator("[data-testid=add-after]").innerText().then((t) => t.replace(/\s+/g, " ")), "앨범에서 여러 장");
+      ok(await slow.locator("[data-testid=cam-after] input[capture]").count() === 1, "카메라 버튼");
+      const files = [];
+      for (let i = 0; i < 10; i++) files.push({ name: "m" + i + ".png", mimeType: "image/png", buffer: small1 });
+      const t0 = Date.now();
+      await slow.setInputFiles("[data-testid=file-after]", files);
+      await slow.waitForFunction(() => document.querySelectorAll("[data-testid=pending]").length === 10, null, { timeout: 2000 });
+      ok((await txt(slow, "[data-testid=photo-busy]")).includes("10장 중"), "진행 표시");
+      await slow.screenshot({ path: path.join(SHOTS, "m-photos-uploading.png") });
+      await slow.waitForFunction(() => document.querySelectorAll("[data-testid=grid-after] img").length === 12 && !document.querySelector("[data-testid=pending]"), null, { timeout: 15000 });
+      const took = Date.now() - t0;
+      ok(took < 10 * 600 * 0.45, "한 장씩 올리면 6초 이상, 실제 " + took + "ms");
+      eq(await slow.evaluate(() => window.__maxInflight), 8, "동시에 올라간 최대 장수");
+      eq(await slow.locator("#toast").innerText(), "작업 후 사진 10장을 올렸어요.");
+      await owner.waitForFunction(() => document.querySelector("[data-testid=photos-btn]").textContent.includes("사진 13"));
+      ok(!(await slow.isVisible("[data-testid=photo-busy]")), "진행 표시 사라짐");
+      // 방금 올린 6장 정리
+      for (let i = 0; i < 10; i++) {
+        await slow.click("[data-testid=grid-after] .ph[data-pv] >> nth=2");
+        await slow.click("[data-testid=photo-del]");
+        await slow.click("[data-testid=photo-del-yes]");
+        await slow.waitForFunction((n) => document.querySelectorAll("[data-testid=grid-after] img").length === n, 11 - i);
+      }
+      await slow.close();
+    });
+
+    await step("'잠시 뒤 다시' 거절이 와도 자동으로 다시 올려 모두 성공", async () => {
+      const rl = await newPage(ctxP, { uid: "u_lee", rateLimitFirst: 2 }, errors);
+      await rl.goto(BASE);
+      await rl.waitForSelector("[data-testid=photos-btn]");
+      await rl.click("[data-testid=photos-btn]");
+      await rl.setInputFiles("[data-testid=file-before]", [0, 1, 2].map((i) => ({ name: "r" + i + ".png", mimeType: "image/png", buffer: small2 })));
+      await rl.waitForFunction(() => document.querySelector("#toast").textContent === "작업 전 사진 3장을 올렸어요.", null, { timeout: 10000 });
+      eq(await rl.locator("[data-testid=grid-before] .ph[data-pv]").count(), 4);
+      for (let i = 0; i < 3; i++) {
+        await rl.click("[data-testid=grid-before] .ph[data-pv] >> nth=1");
+        await rl.click("[data-testid=photo-del]");
+        await rl.click("[data-testid=photo-del-yes]");
+        await rl.waitForFunction((n) => document.querySelectorAll("[data-testid=grid-before] .ph[data-pv]").length === n, 3 - i);
+      }
+      await rl.close();
+    });
+
+    await step("보기 전용은 사진 보기만(추가 버튼 없음)", async () => {
+      const v = await newPage(ctxP, { uid: "u_view", readOnly: true }, errors);
+      await v.goto(BASE);
+      await v.waitForSelector("[data-testid=photos-btn]");
+      await v.click("[data-testid=photos-btn]");
+      await imgsLoaded(v, "#modal .ph img");
+      eq(await v.locator("[data-testid=add-before]").count(), 0);
+      await v.close();
+    });
+    await step("폼에 사진 수 표시, 사장님 저장 공간 표시", async () => {
+      await owner.click("[data-testid=card] [data-act=detail]");
+      ok((await txt(owner, "#photoLine")).includes("작업 전 1장 · 작업 후 2장"));
+      await owner.click("#sheet [data-x] >> nth=0");
+      await owner.click("[data-testid=tab-settings]");
+      await owner.waitForFunction(() => /사진 3장/.test(document.querySelector("[data-testid=usage]").textContent));
+      await owner.click("[data-testid=tab-list]");
+    });
+    await step("이전설치 선택 시 출발지·도착지 입력 → 카드·내비에 반영", async () => {
+      await owner.click("[data-testid=card] [data-act=detail]");
+      ok(await owner.isHidden("[data-testid=move-block]"), "세척만일 땐 숨김");
+      eq(await txt(owner, "#addrLabel"), "방문 주소");
+      await owner.selectOption("[data-testid=item] >> nth=0 >> [data-testid=item-work]", "이전설치");
+      await owner.waitForSelector("[data-testid=move-block]", { state: "visible" });
+      eq(await txt(owner, "#addrLabel"), "출발지 주소 (철거하는 곳)");
+      await owner.fill("[data-testid=f-addr2]", "용인시 기흥구 2, 105동 701호");
+      await owner.fill("#f-floor2", "7");
+      await owner.click("button[data-f=elevator2][data-v='있음']");
+      await owner.click("[data-testid=save]");
+      await owner.waitForSelector("[data-testid=addr-to]", { state: "attached" });
+      await owner.click("[data-testid=card] .c-name"); // 펼치면 출발지·도착지 주소
+      await owner.waitForSelector("[data-testid=addr-to]");
+      ok((await txt(owner, "[data-testid=addr-from]")).includes("수원시 영통구 1"));
+      ok((await txt(owner, "[data-testid=addr-to]")).includes("용인시 기흥구 2"));
+      await owner.click("[data-testid=addr-to]");
+      ok((await txt(owner, "#modal h2")).includes("도착지"));
+      ok((await txt(owner, "#modal")).includes("7층 · 엘리베이터 있음"));
+      eq(await owner.getAttribute("[data-testid=web-kakaomap]", "href"), "https://map.kakao.com/link/search/" + encodeURIComponent("용인시 기흥구 2, 105동 701호"));
+      await owner.click("#modal", { position: { x: 10, y: 10 } });
+      await owner.screenshot({ path: path.join(SHOTS, "m-move.png") });
+      // 다시 열면 값 유지, 세척으로 바꾸면 도착지 숨김
+      await owner.click("[data-testid=card] [data-act=detail]");
+      eq(await owner.inputValue("[data-testid=f-addr2]"), "용인시 기흥구 2, 105동 701호");
+      await owner.selectOption("[data-testid=item] >> nth=0 >> [data-testid=item-work]", "세척");
+      ok(await owner.isHidden("[data-testid=move-block]"));
+      await owner.click("#sheet [data-x] >> nth=0");
+    });
+    await step("예약 삭제 시 사진 파일도 정리", async () => {
+      const before = +(await (await fetch(BASE + "__blobcount")).text());
+      eq(before, 3, "삭제 전 파일 수");
+      await owner.click("[data-testid=card] [data-act=detail]");
+      await owner.click("[data-testid=del]");
+      await owner.click("[data-testid=del-yes]");
+      await owner.waitForSelector("[data-testid=empty]");
+      await owner.waitForFunction(() => true);
+      for (let i = 0; i < 20 && +(await (await fetch(BASE + "__blobcount")).text()) > 0; i++) await owner.waitForTimeout(100);
+      eq(+(await (await fetch(BASE + "__blobcount")).text()), 0, "삭제 후 파일 수");
+    });
+    await ctxP.close();
+  }
+
+  // ---------------- 뒤로가기 ----------------
+  console.log("휴대폰 뒤로가기");
+  {
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true });
+    const page = await c.newPage();
+    await stubFont(page);
+    page.on("pageerror", (e) => errors.push("pageerror: " + e.message));
+    await page.addInitScript(mockClaude, { uid: "u_back" });
+    await page.goto(BASE + "start");
+    await page.evaluate(() => {
+      localStorage.clear();
+      localStorage.setItem("mockdb", JSON.stringify({
+        "config/staff": { list: [{ id: "s1", name: "김철수" }] },
+        "reservations/rb": { date: new Date().toISOString().slice(0, 10), time: "10:00", durationMin: 60, status: "scheduled", customer: { name: "뒤로고객", phone: "01012341234", address: "서울 중구 1" }, site: {}, items: [{ type: "통돌이", qty: 1, work: "세척" }], total: 50000, payment: { method: "미정", paid: false }, workers: {} }
+      }));
+      localStorage.setItem("wb.staffId.u_back", "s1");
+    });
+    await page.goto(BASE + "frame");
+    const f = page.frameLocator("#app");
+    await f.locator("[data-testid=card]").waitFor();
+    const back = async () => { await page.evaluate(() => history.back()); await page.waitForTimeout(250); };
+    const onApp = async () => { eq(new URL(page.url()).pathname, "/frame", "장부에 머물러야 함"); await f.locator("#view").waitFor(); };
+    const sheetOpen = () => f.locator("#sheet").evaluate((e) => !e.hidden);
+    const modalOpen = () => f.locator("#modal").evaluate((e) => !e.hidden);
+    const curTab = () => f.locator(".tab[aria-current=page]").getAttribute("data-tab");
+
+    await step("입력 화면에서 뒤로가기 → 입력 화면만 닫힘", async () => {
+      await f.locator("[data-testid=add]").click();
+      ok(await sheetOpen());
+      await back();
+      ok(!(await sheetOpen()), "입력 화면 닫힘");
+      await onApp();
+    });
+    await step("주소 창 → 뒤로가기로 닫힘", async () => {
+      await f.locator("[data-testid=card] [data-act=nav]").click();
+      ok(await modalOpen());
+      await back();
+      ok(!(await modalOpen()));
+      await onApp();
+    });
+    await step("통계 탭 → 뒤로가기 → 예약목록", async () => {
+      await f.locator("[data-testid=tab-stats]").click();
+      await f.locator("[data-testid=tab-settings]").click();
+      await back();
+      eq(await curTab(), "list");
+      await onApp();
+    });
+    await step("달력 → 예약 열기 → 뒤로 두 번: 입력 닫힘 → 예약목록", async () => {
+      await f.locator("[data-testid=tab-cal]").click();
+      await f.locator("[data-testid=cal-day-list] [data-act=detail]").first().click().catch(async () => {
+        await f.locator(".cell.today").click(); await f.locator("[data-testid=cal-day-list] [data-act=detail]").first().click();
+      });
+      ok(await sheetOpen());
+      await back();
+      ok(!(await sheetOpen()));
+      eq(await curTab(), "cal");
+      await back();
+      eq(await curTab(), "list");
+      await onApp();
+    });
+    await step("사진 크게 보기 → 뒤로: 사진 목록 → 뒤로: 사진 창 닫힘", async () => {
+      await f.locator("[data-testid=photos-btn]").click();
+      const png = Buffer.from(await page.evaluate(() => { const c = document.createElement("canvas"); c.width = 300; c.height = 200; c.getContext("2d").fillRect(0, 0, 300, 200); return c.toDataURL("image/png").split(",")[1]; }), "base64");
+      await f.locator("[data-testid=file-before]").setInputFiles({ name: "b.png", mimeType: "image/png", buffer: png });
+      await f.locator("[data-testid=grid-before] .ph[data-pv]").click();
+      await f.locator("[data-testid=photo-big]").waitFor();
+      await back();
+      eq(await f.locator("[data-testid=photo-big]").count(), 0, "크게 보기 닫힘");
+      ok(await modalOpen(), "사진 창은 그대로");
+      await back();
+      ok(!(await modalOpen()));
+      await onApp();
+    });
+    await step("버튼으로 닫은 뒤 뒤로가기는 바로 장부를 나감(헛도는 뒤로가기 없음)", async () => {
+      await f.locator("[data-testid=add]").click();
+      await f.locator("#sheet [data-x]").first().click();
+      await page.waitForTimeout(400);
+      await page.evaluate(() => history.back());
+      await page.waitForURL(/\/start$/);
+    });
+    await c.close();
+  }
+
+  // ---------------- 예전 명단 id · 메모 위치 ----------------
+  console.log("명단에 없는 직원 · 메모 위치");
+  await step("예전 직원 번호는 카드·표·통계·CSV에 안 보이고 인원 계산에서 빠짐", async () => {
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const p = await newPage(c, { uid: "u_old" }, errors);
+    await p.goto(BASE);
+    await p.evaluate(() => {
+      localStorage.clear();
+      localStorage.setItem("mockdb", JSON.stringify({
+        "config/staff": { list: [{ id: "smviv0", name: "김영우" }, { id: "smviv1", name: "박상연" }] },
+        "reservations/ro": { date: new Date().toISOString().slice(0, 10), time: "09:30", durationMin: 180, status: "scheduled", customer: { name: "예전고객", phone: "01082228272", address: "수지구 1" }, site: {}, items: [{ type: "LG 2단", qty: 1, work: "이전설치" }], moveTo: { address: "인천 남동구 1" }, total: 250000, payment: { method: "계좌이체", paid: false }, needed: 2, workers: { smvi18ve90: true, smviv0: false } },
+        "reservations/ro2": { date: new Date().toISOString().slice(0, 10), time: "10:00", durationMin: 60, status: "scheduled", customer: { name: "겹침고객", phone: "", address: "" }, site: {}, items: [{ type: "통돌이", qty: 1, work: "세척" }], total: 1, payment: { method: "미정", paid: false }, workers: { smvi18ve90: true } }
+      }));
+      localStorage.setItem("wb.staffId.u_old", "smvi18ve90"); // 예전 번호로 잡혀 있던 기기
+    });
+    await p.reload();
+    await p.waitForSelector("[data-testid=card]");
+    const body = await p.evaluate(() => document.body.innerText);
+    ok(!body.includes("삭제된"), "목록에 표시됨");
+    ok(body.includes("0/2명"), "인원은 실제 직원만");
+    eq(await p.locator("[data-testid=conflict]").count(), 0, "예전 번호로 겹침 경고 안 함");
+    await p.waitForSelector("[data-testid=pick-김영우]");
+    await p.click("[data-testid=pick-김영우]");
+    await p.click("[data-testid=filter-open]");
+    eq(await p.locator("[data-testid=card]").count(), 2, "인원 부족에 포함");
+    await p.click("[data-testid=filter-all]");
+    await p.click("[data-testid=tab-stats]");
+    ok(!(await txt(p, "[data-testid=by-staff]")).includes("삭제된"), "통계");
+    await p.click("[data-testid=csv]");
+    await p.waitForFunction(() => window.__saved.length === 1);
+    ok(!(await p.evaluate(() => window.__saved[0].data)).includes("삭제된"), "CSV");
+    await p.click("[data-testid=tab-list]");
+    await p.click("[data-testid=add]");
+    const order = await p.evaluate(() => {
+      const note = document.querySelector("#f-note").getBoundingClientRect().top;
+      const site = document.querySelector("#sheet details.fs").getBoundingClientRect().top;
+      return note < site;
+    });
+    ok(order, "메모가 현장 정보 위");
+    await c.close();
+  });
+  await step("명단이 이미 있으면 처음 설정 저장이 덮어쓰지 않음", async () => {
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const p = await newPage(c, { uid: "u_first" }, errors);
+    await p.goto(BASE);
+    await p.evaluate(() => localStorage.clear());
+    await p.reload();
+    await p.waitForSelector("[data-testid=setup-input]");
+    await p.evaluate(() => {
+      const db = JSON.parse(localStorage.getItem("mockdb") || "{}");
+      db["config/staff"] = { list: [{ id: "first0", name: "먼저저장" }] };
+      localStorage.setItem("mockdb", JSON.stringify(db));
+    });
+    await p.locator("[data-testid=setup-input]").nth(0).fill("나중저장");
+    await p.click("[data-testid=setup-save]");
+    await p.waitForSelector("[data-testid=pick-먼저저장]");
+    const names = await p.evaluate(() => JSON.parse(localStorage.getItem("mockdb"))["config/staff"].list.map((x) => x.name));
+    eq(names.join(","), "먼저저장");
+    await c.close();
+  });
+
+  // ---------------- 수정 권한 · 새 예약 알림 · 입력 순서 ----------------
+  console.log("수정 권한 · 새 예약 알림");
+  {
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const kim = await newPage(c, { uid: "u_k" }, errors);
+    await kim.goto(BASE);
+    await kim.evaluate(() => {
+      localStorage.clear();
+      localStorage.setItem("mockdb", JSON.stringify({ "config/staff": { list: [{ id: "k", name: "김영우" }, { id: "j", name: "조형일" }] } }));
+      localStorage.setItem("wb.staffId.u_k", "k");
+      localStorage.setItem("wb.staffId.u_j", "j");
+      localStorage.setItem("wb.staffId.u_boss2", "k");
+    });
+    await kim.reload();
+    await kim.waitForSelector("[data-testid=empty]");
+    const jo = await newPage(c, { uid: "u_j" }, errors);
+    await jo.goto(BASE);
+    await jo.waitForSelector("[data-testid=empty]");
+
+    await step("입력 화면: 기기·작업이 고객 정보보다 위", async () => {
+      await kim.click("[data-testid=add]");
+      const order = await kim.evaluate(() => {
+        const hs = [...document.querySelectorAll("#form .fs > h3")].map((h) => h.textContent);
+        const at = (w) => hs.findIndex((h) => h.includes(w));
+        return at("작업 · 기기") >= 0 && at("작업 · 기기") < at("고객");
+      });
+      ok(order, "순서");
+      await kim.fill("[data-testid=f-name]", "알림고객");
+      await setTotal(kim, "70000");
+      await kim.click("[data-testid=save]");
+      await kim.waitForSelector("[data-testid=card]");
+    });
+    await step("장부를 열어 둔 다른 직원에게 새 예약 알림 + NEW 표시", async () => {
+      await jo.waitForFunction(() => document.querySelector("#toast") && !document.querySelector("#toast").hidden && document.querySelector("#toast").textContent.includes("새 예약"));
+      ok((await txt(jo, "#toast")).includes("김영우님 등록"), "누가 넣었는지");
+      await jo.waitForSelector("[data-testid=new-badge]");
+      ok((await txt(jo, "[data-testid=new-notice]")).includes("새 예약 1건"));
+      eq(await kim.locator("[data-testid=new-badge]").count(), 0, "내가 넣은 예약은 NEW 아님");
+      await jo.screenshot({ path: path.join(SHOTS, "m-notice.png") });
+    });
+    await step("다른 사람이 넣은 예약은 보기만(수정·삭제·입금확인 불가), 완료·참여는 가능", async () => {
+      await jo.click("[data-testid=card] [data-act=detail]");
+      await jo.waitForSelector("[data-testid=readonly-note]");
+      ok((await txt(jo, "[data-testid=readonly-note]")).includes("김영우님이 넣은 예약"));
+      eq(await jo.locator("[data-testid=save]").count(), 0, "저장 버튼 없음");
+      eq(await jo.locator("[data-testid=del]").count(), 0, "삭제 버튼 없음");
+      ok(await jo.isDisabled("[data-testid=f-name]"), "입력칸 잠김");
+      await jo.click("[data-testid=close-view]");
+      eq(await jo.locator("[data-testid=new-badge]").count(), 0, "열어 본 예약은 NEW 사라짐");
+      await jo.click("[data-testid=rsvp-yes]");
+      await kim.waitForFunction(() => document.querySelector("[data-testid=card]").textContent.includes("조형일"));
+      await jo.click("[data-testid=quick-done]");
+      await jo.waitForFunction(() => document.querySelector(".pill.stg-done"));
+      eq(await jo.locator("[data-testid=quick-paid]").count(), 0, "입금확인은 넣은 사람·사장님만");
+      await kim.waitForSelector("[data-testid=quick-paid]");
+    });
+    await step("넣은 사람은 수정 가능, 사장님은 남이 넣은 예약도 수정 가능", async () => {
+      await kim.click("[data-testid=card] [data-act=detail]");
+      eq(await kim.locator("[data-testid=readonly-note]").count(), 0);
+      await kim.click("#sheet [data-x] >> nth=0");
+      const boss = await newPage(c, { uid: "u_boss2", owner: true }, errors);
+      await boss.goto(BASE);
+      await boss.waitForSelector("[data-testid=card]");
+      await boss.click("[data-testid=card] [data-act=detail]");
+      await boss.waitForSelector("[data-testid=save]");
+      await setTotal(boss, "80000");
+      await boss.click("[data-testid=save]");
+      await jo.waitForFunction(() => document.querySelector("[data-testid=card-amt]").textContent === "80,000원");
+      await boss.close();
+    });
+    await step("장부를 닫아 둔 사이 들어온 예약은 다시 열면 '새 예약 n건'으로 모아 보여 줌", async () => {
+      await jo.close();
+      await kim.click("[data-testid=add]");
+      await kim.fill("[data-testid=f-name]", "밤사이고객");
+      await kim.fill("[data-testid=f-time]", "15:00");
+      await kim.click("[data-testid=save]");
+      await kim.waitForFunction(() => document.querySelectorAll("[data-testid=card]").length === 2);
+      const jo2 = await newPage(c, { uid: "u_j" }, errors);
+      await jo2.goto(BASE);
+      await jo2.waitForSelector("[data-testid=new-notice]");
+      ok((await txt(jo2, "[data-testid=new-notice]")).includes("새 예약 1건"));
+      ok((await txt(jo2, "[data-testid=new-notice]")).includes("밤사이고객"));
+      await jo2.click("[data-testid=seen-all]");
+      eq(await jo2.locator("[data-testid=new-notice]").count(), 0);
+      eq(await jo2.locator("[data-testid=new-badge]").count(), 0);
+      await jo2.reload();
+      await jo2.waitForSelector("[data-testid=card]");
+      eq(await jo2.locator("[data-testid=new-notice]").count(), 0, "확인한 뒤엔 다시 안 뜸");
+      await jo2.close();
+    });
+    await c.close();
+  }
+
+  await step("콘솔·스크립트 오류 0건", async () => { eq(errors.length, 0, errors.join("\n")); });
+
+  await browser.close();
+  server.close();
+  console.log(`\n${passed} passed, ${failed} failed` + (failed ? "\n실패: " + failures.join(", ") : ""));
+  process.exit(failed ? 1 : 0);
+})().catch((e) => { console.error(e); process.exit(2); });
