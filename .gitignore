@@ -1,3 +1,5 @@
 test/shots/
 node_modules/
 .DS_Store
+test/w*-card.png
+test/w*-detail.png
