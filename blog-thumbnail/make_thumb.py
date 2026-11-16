@@ -18,17 +18,17 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 HERE = Path(__file__).resolve().parent
-TITLE_FONT = HERE / "fonts" / "Pretendard-ExtraBold.otf"
-SUB_FONT = HERE / "fonts" / "Pretendard-Bold.otf"
+TITLE_FONT = HERE / "fonts" / "Recipekorea.ttf"  # 레코체
+SUB_FONT = HERE / "fonts" / "Recipekorea.ttf"
 
 # 모든 수치는 한 변 길이(S)에 대한 비율
 BAND_ALPHA = 120          # 띠 불투명도 (0~255), 약 47%
-TITLE_SIZE = 0.093        # 제목 글자 크기
-TITLE_GAP = 0.114         # 제목 줄 간격 (중심-중심)
-SUB_SIZE = 0.046          # '굿디 클린' 글자 크기
-PAD_TOP = 0.102           # 띠 위끝 ~ 제목 첫 줄 중심
-SUB_GAP = 0.128           # 제목 마지막 줄 중심 ~ 부제 중심
-PAD_BOTTOM = 0.066        # 부제 중심 ~ 띠 아래끝
+TITLE_SIZE = 0.068        # 제목 글자 크기
+TITLE_GAP = 0.105         # 제목 줄 간격 (중심-중심)
+SUB_SIZE = 0.041          # '굿디 클린' 글자 크기
+PAD_TOP = 0.090           # 띠 위끝 ~ 제목 첫 줄 중심
+SUB_GAP = 0.115           # 제목 마지막 줄 중심 ~ 부제 중심
+PAD_BOTTOM = 0.062        # 부제 중심 ~ 띠 아래끝
 MAX_TEXT_W = 0.88         # 글자가 이 폭을 넘으면 자동으로 줄임
 
 
