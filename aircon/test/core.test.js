@@ -11,7 +11,7 @@ function t(name, fn) {
 const R = (o) => Object.assign({
   id: "x", date: "2026-10-21", time: "09:00", durationMin: 120, status: "scheduled",
   customer: { name: "김고객", phone: "010-1111-2222", address: "서울" },
-  items: [{ type: "통돌이", model: "WA16", qty: 1, work: "세척" }],
+  items: [{ type: "벽걸이", model: "WA16", qty: 1, work: "분해세척" }],
   total: 100000, payment: { method: "미정", paid: false }, workers: {}
 }, o);
 
@@ -78,11 +78,11 @@ t("전화 표기", () => {
 console.log("집계");
 const month = [
   R({ id: "1", status: "done", total: 80000, payment: { method: "카드", paid: true },
-      items: [{ type: "통돌이", qty: 1, work: "세척" }, { type: "건조기", qty: 1, work: "세척" }], workers: { s1: true, s2: true } }),
+      items: [{ type: "벽걸이", qty: 1, work: "분해세척" }, { type: "스탠드", qty: 1, work: "분해세척" }], workers: { s1: true, s2: true } }),
   R({ id: "2", status: "done", total: 150000, payment: { method: "현금", paid: false },
-      items: [{ type: "LG 2단", qty: 1, work: "이전설치" }], workers: { s1: true } }),
-  R({ id: "3", status: "scheduled", total: 120000, items: [{ type: "삼성 2단", qty: 2, work: "세척" }] }),
-  R({ id: "4", status: "canceled", total: 999999, items: [{ type: "빌트인", qty: 1, work: "세척" }], workers: { s1: true } }),
+      items: [{ type: "천장형 4way", qty: 1, work: "분해세척" }], workers: { s1: true } }),
+  R({ id: "3", status: "scheduled", total: 120000, items: [{ type: "2in1", qty: 2, work: "분해세척" }] }),
+  R({ id: "4", status: "canceled", total: 999999, items: [{ type: "천장형 1way", qty: 1, work: "분해세척" }], workers: { s1: true } }),
   R({ id: "5", date: "2026-11-02", status: "done", total: 50000 })
 ];
 t("월 필터", () => assert.strictEqual(C.filterMonth(month, "2026-10").length, 4));
@@ -103,17 +103,17 @@ t("미수금", () => {
 });
 t("기기별 대수", () => {
   const s = C.summarize(C.filterMonth(month, "2026-10"));
-  assert.strictEqual(s.byType["통돌이"], 1);
-  assert.strictEqual(s.byType["건조기"], 1);
-  assert.strictEqual(s.byType["삼성 2단"], 2);
-  assert.strictEqual(s.byType["LG 2단"], 1);
-  assert.strictEqual(s.byType["빌트인"], 0);
+  assert.strictEqual(s.byType["벽걸이"], 1);
+  assert.strictEqual(s.byType["스탠드"], 1);
+  assert.strictEqual(s.byType["2in1"], 2);
+  assert.strictEqual(s.byType["천장형 4way"], 1);
+  assert.strictEqual(s.byType["천장형 1way"], 0);
   assert.strictEqual(s.units, 5);
 });
 t("작업별 건수(예약 단위)", () => {
   const s = C.summarize(C.filterMonth(month, "2026-10"));
-  assert.strictEqual(s.byWork["세척"], 2);
-  assert.strictEqual(s.byWork["이전설치"], 1);
+  assert.strictEqual(s.byWork["분해세척"], 3);
+  assert.deepStrictEqual(C.WORKS, ["분해세척"]);
 });
 t("직원별(취소 제외)", () => {
   const s = C.summarize(C.filterMonth(month, "2026-10"));
@@ -160,7 +160,7 @@ t("입력 검사", () => {
   assert.ok(e.date && e.time && e.customer && e.items && e.status);
 });
 t("대수 정리(0·빈값 → 1)", () => {
-  assert.deepStrictEqual(C.cleanItems([{ type: "통돌이", qty: "0" }, { type: "" }]).map(i => i.qty), [1]);
+  assert.deepStrictEqual(C.cleanItems([{ type: "벽걸이", qty: "0" }, { type: "" }]).map(i => i.qty), [1]);
 });
 
 console.log("CSV");
@@ -181,18 +181,12 @@ t("CSV: 명단에 없는 직원은 빼고 표시", () => {
   assert.ok(!csv.includes("삭제된"));
 });
 
-console.log("이전설치 출발지·도착지");
-const MV = R({ items: [{ type: "LG 2단", qty: 1, work: "이전설치" }], customer: { name: "이사고객", phone: "", address: "수원시 영통구 1" }, moveTo: { address: "용인시 기흥구 2", floor: "7", elevator: "있음" } });
-t("이전설치 여부", () => {
-  assert.ok(C.isMove(MV));
-  assert.ok(!C.isMove(R({})));
-});
-t("도착지 주소로 검색", () => assert.ok(C.searchMatch(MV, "기흥구")));
-t("CSV 도착지 열", () => {
-  const rows = C.toCSV([MV, R({ moveTo: { address: "무시됨" } })], []).split("\r\n");
-  assert.ok(rows[0].includes("주소(출발지),도착지 주소"));
-  assert.ok(rows[1].includes("수원시 영통구 1,용인시 기흥구 2"));
-  assert.ok(!rows[2].includes("무시됨"), "이전설치가 아니면 도착지 비움");
+console.log("에어컨 기기·작업");
+t("기기 종류", () => assert.deepStrictEqual(C.TYPES, ["벽걸이", "스탠드", "2in1", "천장형 1way", "천장형 4way", "업소용"]));
+t("모르는 작업은 분해세척으로, 이전설치 칸은 꺼짐", () => {
+  assert.strictEqual(C.cleanItems([{ type: "벽걸이", work: "세척" }])[0].work, "분해세척");
+  assert.ok(!C.isMove(R({ items: [{ type: "스탠드", qty: 1, work: "이전설치" }], moveTo: { address: "무시됨" } })));
+  assert.ok(!C.toCSV([R({ moveTo: { address: "무시됨" } })], []).includes("무시됨"));
 });
 
 console.log("작업 사진");
@@ -271,12 +265,12 @@ t("오전·오후 시간 표기", () => {
   assert.strictEqual(C.timeKo(""), "");
 });
 t("확인 문자 문구", () => {
-  const r = R({ date: "2026-10-24", time: "10:00", customer: { name: "김민지", phone: "010-1234-5678" }, items: [{ type: "건조기", qty: 1, work: "이전설치" }] });
-  assert.strictEqual(C.reminderText(r), "[굿디클린] 김민지 고객님, 내일 10월 24일(토) 오전 10시 건조기 이전설치 예약 확인 드립니다. 변경 있으시면 연락 주세요.");
+  const r = R({ date: "2026-10-24", time: "10:00", customer: { name: "김민지", phone: "010-1234-5678" }, items: [{ type: "스탠드", qty: 1, work: "분해세척" }] });
+  assert.strictEqual(C.reminderText(r), "[굿디클린] 김민지 고객님, 내일 10월 24일(토) 오전 10시 스탠드 분해세척 예약 확인 드립니다. 변경 있으시면 연락 주세요.");
 });
 t("확인 문자: 이름 없음·기기 여러 개", () => {
-  const r = R({ date: "2026-10-29", time: "09:30", customer: { name: "", phone: "010" }, items: [{ type: "통돌이", qty: 1, work: "세척" }, { type: "건조기", qty: 1, work: "세척" }] });
-  assert.strictEqual(C.reminderText(r), "[굿디클린] 고객님, 내일 10월 29일(목) 오전 9시 30분 통돌이·건조기 세척 예약 확인 드립니다. 변경 있으시면 연락 주세요.");
+  const r = R({ date: "2026-10-29", time: "09:30", customer: { name: "", phone: "010" }, items: [{ type: "벽걸이", qty: 1, work: "분해세척" }, { type: "스탠드", qty: 1, work: "분해세척" }] });
+  assert.strictEqual(C.reminderText(r), "[굿디클린] 고객님, 내일 10월 29일(목) 오전 9시 30분 벽걸이·스탠드 분해세척 예약 확인 드립니다. 변경 있으시면 연락 주세요.");
 });
 t("문자 링크: 아이폰 &body, 안드로이드 ?body", () => {
   assert.strictEqual(C.smsHref("010-1234-5678", "안녕 하세요", "ios"), "sms:01012345678&body=%EC%95%88%EB%85%95%20%ED%95%98%EC%84%B8%EC%9A%94");

@@ -116,10 +116,10 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
     await p1.fill("[data-testid=f-time]", "10:00");
     await p1.click("button[data-f=dur][data-v='120']");
     eq(await txt(p1, "[data-testid=end-time]"), "12:00", "종료시간");
-    await p1.selectOption("[data-testid=item] >> nth=0 >> [data-testid=item-type]", "통돌이");
+    await p1.selectOption("[data-testid=item] >> nth=0 >> [data-testid=item-type]", "벽걸이");
     await p1.fill("[data-testid=item] >> nth=0 >> [data-testid=item-model]", "WA16T6A10");
     await p1.click("[data-testid=add-item]");
-    await p1.selectOption("[data-testid=item] >> nth=1 >> [data-testid=item-type]", "건조기");
+    await p1.selectOption("[data-testid=item] >> nth=1 >> [data-testid=item-type]", "스탠드");
     await p1.click("[data-testid=item] >> nth=1 >> [data-testid=item-plus]");
     eq(await p1.inputValue("[data-testid=item] >> nth=1 >> [data-testid=item-qty]"), "2", "대수 +");
     await setTotal(p1, "150000");
@@ -137,7 +137,7 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
     await card.locator(".c-name").click(); // 눌러서 펼치면 주소·금액·모델까지
     await card.locator("[data-testid=card-more]:not([hidden])").waitFor();
     const t = await card.innerText();
-    for (const s of ["10:00", "~12:00", "2시간", "홍길동", "통돌이 1대", "건조기 2대", "세척", "WA16T6A10", "150,000원", "010-1234-5678", "테헤란로", "김철수", "1/2명"]) ok(t.includes(s), "카드에 '" + s + "' 없음:\n" + t);
+    for (const s of ["10:00", "~12:00", "2시간", "홍길동", "벽걸이 1대", "스탠드 2대", "세척", "WA16T6A10", "150,000원", "010-1234-5678", "테헤란로", "김철수", "1/2명"]) ok(t.includes(s), "카드에 '" + s + "' 없음:\n" + t);
   });
 
   await step("상단 요약: 1건 · 150,000원", async () => {
@@ -150,8 +150,8 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
     eq(await txt(p1, "[data-testid=st-count]"), "1건");
     eq(await txt(p1, "[data-testid=st-total]"), "150,000원");
     eq(await txt(p1, "[data-testid=st-done]"), "0원");
-    eq(await txt(p1, "[data-testid=by-type] [data-type='통돌이']"), "1대");
-    eq(await txt(p1, "[data-testid=by-type] [data-type='건조기']"), "2대");
+    eq(await txt(p1, "[data-testid=by-type] [data-type='벽걸이']"), "1대");
+    eq(await txt(p1, "[data-testid=by-type] [data-type='스탠드']"), "2대");
     ok(await p1.locator("[data-testid=year-chart] svg path").count() >= 1, "그래프 막대 없음");
     const fillW = await p1.evaluate(() => document.querySelector("[data-testid=by-type] .fill").getBoundingClientRect().width);
     ok(fillW > 20, "기기별 막대가 채워지지 않음: " + fillW);
@@ -183,8 +183,7 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
     await p1.fill("[data-testid=f-addr]", "수원시 영통구 1");
     await p1.fill("[data-testid=f-time]", "11:00");
     await p1.click("button[data-f=dur][data-v='60']");
-    await p1.selectOption("[data-testid=item] >> nth=0 >> [data-testid=item-type]", "LG 2단");
-    await p1.selectOption("[data-testid=item] >> nth=0 >> [data-testid=item-work]", "이전설치");
+    await p1.selectOption("[data-testid=item] >> nth=0 >> [data-testid=item-type]", "천장형 4way");
     await setTotal(p1, "120000");
     await p1.click("button[data-f=needed][data-v='3']");
     await p1.waitForSelector("[data-testid=form-conflict]");
@@ -260,7 +259,7 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
     await p1.fill("[data-testid=f-date]", NEXT_DAY);
     await p1.fill("[data-testid=f-name]", "강감찬");
     await p1.fill("[data-testid=f-phone]", "01055556666");
-    await p1.selectOption("[data-testid=item] >> nth=0 >> [data-testid=item-type]", "빌트인");
+    await p1.selectOption("[data-testid=item] >> nth=0 >> [data-testid=item-type]", "천장형 1way");
     await setTotal(p1, "90000");
     await p1.click("[data-testid=save]");
     await p1.waitForSelector("#sheet[hidden]", { state: "attached" });
@@ -361,7 +360,7 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
     eq(await txt(p1, "[data-testid=top-revenue]"), "120,000원");
     await p1.click("[data-testid=tab-stats]");
     eq(await txt(p1, "[data-testid=st-done]"), "120,000원");
-    eq(await txt(p1, "[data-testid=by-type] [data-type='통돌이']"), "0대");
+    eq(await txt(p1, "[data-testid=by-type] [data-type='벽걸이']"), "0대");
   });
 
   await step("다른 사람이 먼저 고친 예약은 덮어쓰기 전에 경고", async () => {
@@ -434,7 +433,7 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
     await p.evaluate(() => {
       localStorage.setItem("mockdb", JSON.stringify({
         "config/staff": { list: [{ id: "s1", name: "김철수" }] },
-        "reservations/r1": { date: new Date().toISOString().slice(0, 8) + "15", time: "09:00", durationMin: 60, status: "scheduled", customer: { name: "보기고객", phone: "", address: "" }, items: [{ type: "통돌이", qty: 1, work: "세척" }], total: 50000, payment: { method: "미정", paid: false }, workers: {} }
+        "reservations/r1": { date: new Date().toISOString().slice(0, 8) + "15", time: "09:00", durationMin: 60, status: "scheduled", customer: { name: "보기고객", phone: "", address: "" }, items: [{ type: "벽걸이", qty: 1, work: "분해세척" }], total: 50000, payment: { method: "미정", paid: false }, workers: {} }
       }));
       localStorage.setItem("wb.staffId.u_view", "s1");
     });
@@ -468,7 +467,7 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
     await p.evaluate((addr) => {
       localStorage.setItem("mockdb", JSON.stringify({
         "config/staff": { list: [{ id: "s1", name: "김철수" }] },
-        "reservations/r1": { date: new Date().toISOString().slice(0, 10), time: "09:00", durationMin: 60, status: "scheduled", customer: { name: "내비고객", phone: "01011112222", address: addr }, site: { floor: "12", elevator: "있음", parking: "", memo: "" }, items: [{ type: "통돌이", qty: 1, work: "세척" }], total: 50000, payment: { method: "미정", paid: false }, workers: { s1: true } }
+        "reservations/r1": { date: new Date().toISOString().slice(0, 10), time: "09:00", durationMin: 60, status: "scheduled", customer: { name: "내비고객", phone: "01011112222", address: addr }, site: { floor: "12", elevator: "있음", parking: "", memo: "" }, items: [{ type: "벽걸이", qty: 1, work: "분해세척" }], total: 50000, payment: { method: "미정", paid: false }, workers: { s1: true } }
       }));
       localStorage.setItem("wb.staffId.u_nav", "s1");
     }, NAV_ADDR);
@@ -517,8 +516,8 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
     await c.close();
   });
 
-  // ---------------- 작업 사진 · 이전설치 ----------------
-  console.log("작업 사진 · 이전설치");
+  // ---------------- 작업 사진 ----------------
+  console.log("작업 사진");
   {
     const ctxP = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true });
     const owner = await newPage(ctxP, { uid: "u_owner", owner: true }, errors);
@@ -527,7 +526,7 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
       localStorage.clear();
       localStorage.setItem("mockdb", JSON.stringify({
         "config/staff": { list: [{ id: "s1", name: "김철수" }, { id: "s2", name: "이영희" }] },
-        "reservations/rp": { date: new Date().toISOString().slice(0, 10), time: "13:00", durationMin: 120, status: "scheduled", customer: { name: "사진고객", phone: "01033334444", address: "수원시 영통구 1" }, site: {}, items: [{ type: "통돌이", qty: 1, work: "세척" }], total: 80000, payment: { method: "미정", paid: false }, workers: { s1: true } }
+        "reservations/rp": { date: new Date().toISOString().slice(0, 10), time: "13:00", durationMin: 120, status: "scheduled", customer: { name: "사진고객", phone: "01033334444", address: "수원시 영통구 1" }, site: {}, items: [{ type: "벽걸이", qty: 1, work: "분해세척" }], total: 80000, payment: { method: "미정", paid: false }, workers: { s1: true } }
       }));
       localStorage.setItem("wb.staffId.u_owner", "s1");
       localStorage.setItem("wb.staffId.u_lee", "s2");
@@ -659,33 +658,12 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
       await owner.waitForFunction(() => /사진 3장/.test(document.querySelector("[data-testid=usage]").textContent));
       await owner.click("[data-testid=tab-list]");
     });
-    await step("이전설치 선택 시 출발지·도착지 입력 → 카드·내비에 반영", async () => {
+    await step("분해세척 하나뿐: 작업 칸·출발지/도착지 칸 숨김", async () => {
       await owner.click("[data-testid=card] [data-act=detail]");
-      ok(await owner.isHidden("[data-testid=move-block]"), "세척만일 땐 숨김");
+      ok(await owner.isHidden("[data-testid=move-block]"), "도착지 칸 숨김");
+      ok(await owner.isHidden("[data-testid=item] >> nth=0 >> [data-testid=item-work]"), "작업 칸 숨김");
+      eq(await owner.inputValue("[data-testid=item] >> nth=0 >> [data-testid=item-work]"), "분해세척");
       eq(await txt(owner, "#addrLabel"), "방문 주소");
-      await owner.selectOption("[data-testid=item] >> nth=0 >> [data-testid=item-work]", "이전설치");
-      await owner.waitForSelector("[data-testid=move-block]", { state: "visible" });
-      eq(await txt(owner, "#addrLabel"), "출발지 주소 (철거하는 곳)");
-      await owner.fill("[data-testid=f-addr2]", "용인시 기흥구 2, 105동 701호");
-      await owner.fill("#f-floor2", "7");
-      await owner.click("button[data-f=elevator2][data-v='있음']");
-      await owner.click("[data-testid=save]");
-      await owner.waitForSelector("[data-testid=addr-to]", { state: "attached" });
-      await owner.click("[data-testid=card] .c-name"); // 펼치면 출발지·도착지 주소
-      await owner.waitForSelector("[data-testid=addr-to]");
-      ok((await txt(owner, "[data-testid=addr-from]")).includes("수원시 영통구 1"));
-      ok((await txt(owner, "[data-testid=addr-to]")).includes("용인시 기흥구 2"));
-      await owner.click("[data-testid=addr-to]");
-      ok((await txt(owner, "#modal h2")).includes("도착지"));
-      ok((await txt(owner, "#modal")).includes("7층 · 엘리베이터 있음"));
-      eq(await owner.getAttribute("[data-testid=web-kakaomap]", "href"), "https://map.kakao.com/link/search/" + encodeURIComponent("용인시 기흥구 2, 105동 701호"));
-      await owner.click("#modal", { position: { x: 10, y: 10 } });
-      await owner.screenshot({ path: path.join(SHOTS, "m-move.png") });
-      // 다시 열면 값 유지, 세척으로 바꾸면 도착지 숨김
-      await owner.click("[data-testid=card] [data-act=detail]");
-      eq(await owner.inputValue("[data-testid=f-addr2]"), "용인시 기흥구 2, 105동 701호");
-      await owner.selectOption("[data-testid=item] >> nth=0 >> [data-testid=item-work]", "세척");
-      ok(await owner.isHidden("[data-testid=move-block]"));
       await owner.click("#sheet [data-x] >> nth=0");
     });
     await step("예약 삭제 시 사진 파일도 정리", async () => {
@@ -715,7 +693,7 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
       localStorage.clear();
       localStorage.setItem("mockdb", JSON.stringify({
         "config/staff": { list: [{ id: "s1", name: "김철수" }] },
-        "reservations/rb": { date: new Date().toISOString().slice(0, 10), time: "10:00", durationMin: 60, status: "scheduled", customer: { name: "뒤로고객", phone: "01012341234", address: "서울 중구 1" }, site: {}, items: [{ type: "통돌이", qty: 1, work: "세척" }], total: 50000, payment: { method: "미정", paid: false }, workers: {} }
+        "reservations/rb": { date: new Date().toISOString().slice(0, 10), time: "10:00", durationMin: 60, status: "scheduled", customer: { name: "뒤로고객", phone: "01012341234", address: "서울 중구 1" }, site: {}, items: [{ type: "벽걸이", qty: 1, work: "분해세척" }], total: 50000, payment: { method: "미정", paid: false }, workers: {} }
       }));
       localStorage.setItem("wb.staffId.u_back", "s1");
     });
@@ -795,8 +773,8 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
       localStorage.clear();
       localStorage.setItem("mockdb", JSON.stringify({
         "config/staff": { list: [{ id: "smviv0", name: "김영우" }, { id: "smviv1", name: "박상연" }] },
-        "reservations/ro": { date: new Date().toISOString().slice(0, 10), time: "09:30", durationMin: 180, status: "scheduled", customer: { name: "예전고객", phone: "01082228272", address: "수지구 1" }, site: {}, items: [{ type: "LG 2단", qty: 1, work: "이전설치" }], moveTo: { address: "인천 남동구 1" }, total: 250000, payment: { method: "계좌이체", paid: false }, needed: 2, workers: { smvi18ve90: true, smviv0: false } },
-        "reservations/ro2": { date: new Date().toISOString().slice(0, 10), time: "10:00", durationMin: 60, status: "scheduled", customer: { name: "겹침고객", phone: "", address: "" }, site: {}, items: [{ type: "통돌이", qty: 1, work: "세척" }], total: 1, payment: { method: "미정", paid: false }, workers: { smvi18ve90: true } }
+        "reservations/ro": { date: new Date().toISOString().slice(0, 10), time: "09:30", durationMin: 180, status: "scheduled", customer: { name: "예전고객", phone: "01082228272", address: "수지구 1" }, site: {}, items: [{ type: "천장형 4way", qty: 1, work: "분해세척" }], total: 250000, payment: { method: "계좌이체", paid: false }, needed: 2, workers: { smvi18ve90: true, smviv0: false } },
+        "reservations/ro2": { date: new Date().toISOString().slice(0, 10), time: "10:00", durationMin: 60, status: "scheduled", customer: { name: "겹침고객", phone: "", address: "" }, site: {}, items: [{ type: "벽걸이", qty: 1, work: "분해세척" }], total: 1, payment: { method: "미정", paid: false }, workers: { smvi18ve90: true } }
       }));
       localStorage.setItem("wb.staffId.u_old", "smvi18ve90"); // 예전 번호로 잡혀 있던 기기
     });

@@ -37,21 +37,5 @@
       "type": "image/png",
       "purpose": "maskable"
     }
-  ],
-  "screenshots": [
-    {
-      "src": "screenshots/list.png",
-      "sizes": "824x1464",
-      "type": "image/png",
-      "form_factor": "narrow",
-      "label": "예약 목록: 날짜별 예약 카드"
-    },
-    {
-      "src": "screenshots/stats.png",
-      "sizes": "824x1464",
-      "type": "image/png",
-      "form_factor": "narrow",
-      "label": "월별 통계: 건수·매출·미수금"
-    }
   ]
 }

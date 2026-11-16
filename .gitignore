@@ -3,3 +3,6 @@ node_modules/
 .DS_Store
 test/w*-card.png
 test/w*-detail.png
+aircon/test/shots/
+aircon/test/w*-card.png
+aircon/test/w*-detail.png

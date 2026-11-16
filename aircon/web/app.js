@@ -1703,7 +1703,7 @@
 
   function itemHtml(it, i) {
     return '<div class="item" data-i="' + i + '" data-testid="item">' +
-      '<select data-k="type" aria-label="기기 종류" data-testid="item-type">' + C.TYPES.map(function (t) { return "<option" + (t === it.type ? " selected" : "") + ">" + esc(t) + "</option>"; }).join("") + "</select>" +
+      '<select data-k="type" aria-label="기기 종류" data-testid="item-type"' + (C.WORKS.length < 2 ? ' class="full"' : "") + '>' + C.TYPES.map(function (t) { return "<option" + (t === it.type ? " selected" : "") + ">" + esc(t) + "</option>"; }).join("") + "</select>" +
       '<select data-k="work" aria-label="작업" data-testid="item-work"' + (C.WORKS.length < 2 ? " hidden" : "") + '>' + C.WORKS.map(function (w) { return "<option" + (w === it.work ? " selected" : "") + ">" + esc(w) + "</option>"; }).join("") + "</select>" +
       '<input class="full" data-k="model" value="' + esc(it.model) + '" placeholder="모델명 (예: AR07B9150HZT)" aria-label="모델명" data-testid="item-model">' +
       '<div class="qty"><button type="button" data-q="-1" aria-label="대수 줄이기">−</button><input data-k="qty" inputmode="numeric" value="' + esc(it.qty) + '" aria-label="대수" data-testid="item-qty"><button type="button" data-q="1" aria-label="대수 늘리기" data-testid="item-plus">+</button></div>' +

@@ -195,12 +195,12 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
   const seed = {
     docs: {
       "config/staff": STAFF,
-      ["reservations/r_tmr"]: { date: TOMORROW, time: "10:00", durationMin: 120, status: "scheduled", customer: { name: "김민지", phone: "010-1234-5678", address: "수원" }, items: [{ type: "건조기", qty: 1, work: "이전설치" }], total: 150000, payment: { method: "미정", paid: false }, workers: {}, createdBy: "smvivcjg00", createdAt: "2026-01-01T00:00:00Z" },
-      ["reservations/r_kim"]: { date: TODAY, time: "15:00", durationMin: 60, status: "scheduled", customer: { name: "남의고객", phone: "", address: "서울" }, items: [{ type: "통돌이", qty: 1, work: "세척" }], total: 50000, payment: { method: "미정", paid: false }, workers: {}, createdBy: "smvivcjg00", createdAt: "2026-01-01T00:00:00Z" }
+      ["reservations/r_tmr"]: { date: TOMORROW, time: "10:00", durationMin: 120, status: "scheduled", customer: { name: "김민지", phone: "010-1234-5678", address: "수원" }, items: [{ type: "스탠드", qty: 1, work: "분해세척" }], total: 150000, payment: { method: "미정", paid: false }, workers: {}, createdBy: "smvivcjg00", createdAt: "2026-01-01T00:00:00Z" },
+      ["reservations/r_kim"]: { date: TODAY, time: "15:00", durationMin: 60, status: "scheduled", customer: { name: "남의고객", phone: "", address: "서울" }, items: [{ type: "벽걸이", qty: 1, work: "분해세척" }], total: 50000, payment: { method: "미정", paid: false }, workers: {}, createdBy: "smvivcjg00", createdAt: "2026-01-01T00:00:00Z" }
     },
     files: { [REQ_PHOTO]: { owner: null, size: tinyJpeg.length } },
     bookings: [
-      { id: "b1", created_at: new Date().toISOString(), status: "new", name: "이고객", phone: "010-5555-6666", phone_digits: "01055556666", address: "용인시 기흥구 1", move_to: "수원시 영통구 2", want_date: TOMORROW, time_slot: "오후", items: [{ type: "건조기", qty: 1, work: "이전설치" }], note: "엘리베이터 있음", photo: REQ_PHOTO },
+      { id: "b1", created_at: new Date().toISOString(), status: "new", name: "이고객", phone: "010-5555-6666", phone_digits: "01055556666", address: "용인시 기흥구 1", move_to: "", want_date: TOMORROW, time_slot: "오후", items: [{ type: "스탠드", qty: 1, work: "분해세척" }], note: "엘리베이터 있음", photo: REQ_PHOTO },
       { id: "b2", created_at: new Date().toISOString(), status: "new", name: "스팸", phone: "010-0000-0000", phone_digits: "01000000000", address: "x", move_to: "", want_date: TOMORROW, time_slot: "", items: [], note: "" }
     ]
   };
@@ -275,10 +275,10 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     eq(await p.inputValue("[data-testid=f-name]"), "이고객");
     eq(await p.inputValue("[data-testid=f-phone]"), "010-5555-6666");
     eq(await p.inputValue("[data-testid=f-addr]"), "용인시 기흥구 1");
-    eq(await p.inputValue("[data-testid=f-addr2]"), "수원시 영통구 2");
+    ok(await p.isHidden("[data-testid=move-block]"), "분해세척은 도착지 칸 없음");
     eq(await p.inputValue("[data-testid=f-date]"), TOMORROW);
     eq(await p.inputValue("[data-testid=f-time]"), "13:00");
-    eq(await p.inputValue("[data-testid=item-type]"), "건조기");
+    eq(await p.inputValue("[data-testid=item-type]"), "스탠드");
     ok((await p.inputValue("#f-note")).includes("엘리베이터 있음"));
     await p.fill("[data-testid=f-total]", "180000");
     await p.click("[data-testid=save]");
@@ -310,9 +310,9 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     await p.click("[data-testid=open-rem]");
     await p.waitForSelector("[data-testid=rem-card]");
     const t = await p.locator("[data-testid=rem-card]", { hasText: "김민지" }).locator("[data-testid=rem-text]").innerText();
-    ok(t.startsWith("[굿디클린] 김민지 고객님, 내일 ") && t.includes("오전 10시 건조기 이전설치 예약 확인 드립니다"), t);
+    ok(t.startsWith("[굿디클린] 김민지 고객님, 내일 ") && t.includes("오전 10시 스탠드 분해세척 예약 확인 드립니다"), t);
     const href = await p.locator("[data-testid=rem-card]", { hasText: "김민지" }).locator("[data-testid=rem-send]").getAttribute("href");
-    ok(href.startsWith("sms:01012345678?body=%5B%EC%84%B8%ED%83%81%EA%B8%B0"), href);
+    ok(href.startsWith("sms:01012345678?body=%5B%EA%B5%BF%EB%94%94%ED%81%B4%EB%A6%B0%5D"), href);
   });
   await step("[보냄 표시] → 기록되고 다 보내면 배너 사라짐", async () => {
     for (const name of ["김민지", "이고객"]) {
@@ -515,7 +515,7 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     await t2.waitForSelector("[data-testid=card]");
     await p2.evaluate(async () => {
       const db = await window.claude.use("db");
-      await db.collection("reservations").doc("r_live").set({ date: new Date().toISOString().slice(0, 10), time: "11:00", durationMin: 60, status: "scheduled", customer: { name: "실시간고객", phone: "", address: "" }, items: [{ type: "통돌이", qty: 1, work: "세척" }], total: 1, payment: { method: "미정", paid: false }, workers: {}, createdBy: "smvivcjg01", createdAt: new Date().toISOString() });
+      await db.collection("reservations").doc("r_live").set({ date: new Date().toISOString().slice(0, 10), time: "11:00", durationMin: 60, status: "scheduled", customer: { name: "실시간고객", phone: "", address: "" }, items: [{ type: "벽걸이", qty: 1, work: "분해세척" }], total: 1, payment: { method: "미정", paid: false }, workers: {}, createdBy: "smvivcjg01", createdAt: new Date().toISOString() });
     });
     await t2.waitForFunction(() => document.body.innerText.includes("실시간고객"));
     await t2.close();
@@ -537,17 +537,18 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
   await step("빈 칸·기기 미선택·동의 없음이면 안내만", async () => {
     await bp.click("[data-testid=b-send]");
     ok(await bp.isVisible("#e-items"), "기기");
-    ok((await bp.innerText("#e-photo")).includes("세탁기 앞면 사진"), "사진 필수");
+    ok((await bp.innerText("#e-photo")).includes("에어컨 앞면 사진"), "사진 필수");
     ok(await bp.isVisible("#e-name"), "이름");
     ok(await bp.isVisible("#e-form"), "동의");
     eq(booked.length, 0);
   });
-  await step("이전설치 선택 → 도착지 칸, 제출하면 요청 접수", async () => {
-    await bp.click("[data-work='이전설치']");
-    ok(await bp.isVisible("[data-testid=b-addr2]"));
-    await bp.click("[data-type='건조기']");
-    await bp.click("[data-type='LG 2단']");
-    await bp.click("[data-q='1'][data-t='LG 2단']");
+  await step("작업은 분해세척 하나라 고르는 칸 없음, 제출하면 요청 접수", async () => {
+    ok(await bp.isHidden("#workBox"), "작업 고르는 칸 숨김");
+    ok(await bp.isHidden("[data-testid=b-addr2]"), "도착지 칸 숨김");
+    eq(await bp.locator("#types .chip").allInnerTexts(), ["벽걸이", "스탠드", "2in1", "천장형 1way", "천장형 4way", "업소용"]);
+    await bp.click("[data-type='스탠드']");
+    await bp.click("[data-type='천장형 4way']");
+    await bp.click("[data-q='1'][data-t='천장형 4way']");
     await bp.fill("[data-testid=b-date]", TOMORROW);
     await bp.click("[data-slot='10:00']");
     eq(await bp.inputValue("[data-testid=b-time]"), "10:00", "빠른 버튼 → 시간 칸");
@@ -562,8 +563,7 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     eq(await bp.getAttribute("[data-testid=b-anytime]", "aria-pressed"), "false");
     await bp.fill("[data-testid=b-name]", "최고객");
     await bp.fill("[data-testid=b-phone]", "01077778888");
-    await bp.fill("[data-testid=b-addr]", "출발 주소");
-    await bp.fill("[data-testid=b-addr2]", "도착 주소");
+    await bp.fill("[data-testid=b-addr]", "방문 주소");
     await bp.fill("[data-testid=b-note]", "3층");
     await bp.check("[data-testid=b-agree]");
     await bp.setInputFiles("[data-testid=b-photo]", { name: "w.jpg", mimeType: "image/jpeg", buffer: tinyJpeg });
@@ -572,12 +572,12 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     await bp.waitForSelector("[data-testid=b-done]");
     ok(photoUploads.has(booked[0].photo), "올린 사진 id 를 함께 보냄");
     delete booked[0].photo;
-    eq(booked[0], { name: "최고객", phone: "010-7777-8888", address: "출발 주소", moveTo: "도착 주소", date: TOMORROW, timeSlot: "14:30",
-      items: [{ type: "건조기", qty: 1, work: "이전설치" }, { type: "LG 2단", qty: 2, work: "이전설치" }], note: "3층", website: "" });
+    eq(booked[0], { name: "최고객", phone: "010-7777-8888", address: "방문 주소", moveTo: "", date: TOMORROW, timeSlot: "14:30",
+      items: [{ type: "스탠드", qty: 1, work: "분해세척" }, { type: "천장형 4way", qty: 2, work: "분해세척" }], note: "3층", website: "" });
   });
   await step("같은 번호로 바로 다시 보내면 '1분 뒤' 안내", async () => {
     await bp.reload();
-    await bp.click("[data-type='통돌이']");
+    await bp.click("[data-type='벽걸이']");
     await bp.fill("[data-testid=b-date]", TOMORROW);
     await bp.fill("[data-testid=b-name]", "최고객");
     await bp.fill("[data-testid=b-phone]", "010-7777-8888");
@@ -673,29 +673,19 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     ok(m.icons.every((s) => s === 200) && m.touch === 200, "아이콘");
     ok(m.sw, "서비스 워커 등록");
   });
-  await step("플레이스토어 앱 준비: id·start_url·화면 사진·오프라인 화면·앱 확인 파일", async () => {
+  await step("앱 준비: id·start_url·오프라인 화면", async () => {
     const r = await p.evaluate(async () => {
       const link = document.querySelector("link[rel=manifest]").href;
       const j = await (await fetch(link)).json();
-      const shots = await Promise.all((j.screenshots || []).map(async (x) => (await fetch(new URL(x.src, link))).status));
       const sw = await (await fetch("sw.js")).text();
       const off = await fetch("offline.html");
-      const al = await (await fetch("/.well-known/assetlinks.json")).text();
-      return { id: j.id, start: j.start_url, scope: j.scope, shots, shotN: (j.screenshots || []).length, maskable: j.icons.some((i) => i.purpose === "maskable"),
-        swFetch: /addEventListener\("fetch"/.test(sw), offline: off.status, offlineText: await off.text(), al };
+      return { id: j.id, start: j.start_url, scope: j.scope, maskable: j.icons.some((i) => i.purpose === "maskable"),
+        swFetch: /addEventListener\("fetch"/.test(sw), offline: off.status, offlineText: await off.text() };
     });
     eq(r.id, "/"); eq(r.start, "/"); eq(r.scope, "/");
-    ok(r.shotN >= 2 && r.shots.every((x) => x === 200), "화면 사진 " + r.shots.join());
     ok(r.maskable, "maskable 아이콘");
     ok(r.swFetch, "서비스 워커 fetch 처리");
     eq(r.offline, 200); ok(r.offlineText.includes("인터넷에 연결되지 않았어요"));
-    const al = JSON.parse(r.al);
-    ok(Array.isArray(al) && al.length >= 1, "assetlinks.json 은 JSON 배열");
-    const t = al[0].target;
-    eq(al[0].relation[0], "delegate_permission/common.handle_all_urls");
-    eq(t.namespace, "android_app"); eq(t.package_name, "com.washercrew.app");
-    ok(t.sha256_cert_fingerprints.length >= 1 && t.sha256_cert_fingerprints.every((f) => /^([0-9A-F]{2}:){31}[0-9A-F]{2}$/.test(f)), "지문 형식");
-    ok(t.sha256_cert_fingerprints.includes("04:79:62:50:4D:FE:AA:41:59:A3:55:55:4A:1A:B4:19:2D:58:38:4F:88:D6:8B:8D:AC:2B:69:B5:86:DA:CE:04"), "업로드 키 지문");
   });
   // ---------------- 휴지통·백업·사장님 관리 ----------------
   await step("예약 삭제 → 휴지통(사진은 남김), 토스트 [되돌리기]로 바로 복구", async () => {
@@ -765,7 +755,7 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     await p.click("[data-testid=tab-stats]");
     await p.waitForSelector("[data-staff-rev]");
     const before = await cells();
-    await p.evaluate(async (t) => { const db = await window.claude.use("db"); await db.doc("reservations/r_share").set({ date: t, time: "15:00", durationMin: 60, status: "done", customer: { name: "나눔고객", address: "수원" }, items: [{ type: "통돌이", qty: 1, work: "세척" }], total: 150000, payment: { method: "현금", paid: true }, workers: { smvivcjg00: true, smvivcjg01: true, smvivcjg03: true }, createdBy: "smvivcjg03", createdAt: "2026-01-01T00:00:00Z" }); }, TODAY);
+    await p.evaluate(async (t) => { const db = await window.claude.use("db"); await db.doc("reservations/r_share").set({ date: t, time: "15:00", durationMin: 60, status: "done", customer: { name: "나눔고객", address: "수원" }, items: [{ type: "벽걸이", qty: 1, work: "분해세척" }], total: 150000, payment: { method: "현금", paid: true }, workers: { smvivcjg00: true, smvivcjg01: true, smvivcjg03: true }, createdBy: "smvivcjg03", createdAt: "2026-01-01T00:00:00Z" }); }, TODAY);
     await p.click("[data-testid=tab-list]");
     await p.locator("[data-testid=card]", { hasText: "나눔고객" }).locator("[data-act=detail]").click();
     await p.waitForFunction(() => document.querySelector("[data-testid=share-info]").textContent.includes("참여 3명 · 1인당 50,000원"));
@@ -821,13 +811,13 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
   // ---------------- 휴대폰 폭에서 카드가 화면 안에 ----------------
   console.log("휴대폰 폭(360~412px) 한 화면");
   {
-    const longNote = "이사날 10월 24일 토 오전 10시 건조기밑에 서랍장 사다리차로 내려드림\n010-8487-8687\n\n보낼주소\n일산동구 산두로 31 , 2층\n\n받을 주소\n서울특별시 노원구 덕릉로94길 10 (중계동, 경남아너스빌) 102동 1105호\n\n10월 24일 토 오전10시  건조기밑에 서랍장 사다리차로 내려드림   현금가15만원 문 또는 창문탈거시 추가비발생고지";
+    const longNote = "이사날 10월 24일 토 오전 10시 스탠드밑에 서랍장 사다리차로 내려드림\n010-8487-8687\n\n보낼주소\n일산동구 산두로 31 , 2층\n\n받을 주소\n서울특별시 노원구 덕릉로94길 10 (중계동, 경남아너스빌) 102동 1105호\n\n10월 24일 토 오전10시  스탠드밑에 서랍장 사다리차로 내려드림   현금가15만원 문 또는 창문탈거시 추가비발생고지";
     const wseed = { docs: {
       "config/staff": STAFF,
       "reservations/r_long": { date: TODAY, time: "10:00", durationMin: 120, status: "scheduled", needed: 2,
         customer: { name: "", phone: "010-8487-8687", address: "일산동구 산두로 31 ~이삿짐에서 1층으로 내려드림 그다음 사다리차" },
         moveTo: { address: "서울특별시 노원구 덕릉로94길 10 (중계동, 경남아너스빌) 102동 1105호", floor: "11", elevator: "있음" },
-        items: [{ type: "건조기", qty: 1, work: "이전설치" }], total: 1500, payment: { method: "계좌이체", paid: false },
+        items: [{ type: "스탠드", qty: 1, work: "분해세척" }], total: 1500, payment: { method: "계좌이체", paid: false },
         workers: { smvivcjg01: "no" }, note: longNote, createdBy: "smvivcjg03", createdAt: "2026-01-01T00:00:00Z" }
     } };
     for (const w of [360, 384, 390, 412]) {
@@ -898,7 +888,7 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
       const c = await browser.newContext({ viewport: { width: 384, height: 800 }, userAgent: UA.chrome, hasTouch: true });
       const ip = await webPage(c, { label: "nav", session: "u-shin", seed: { docs: { "config/staff": STAFF,
         "reservations/r_nav": { date: TODAY, time: "10:00", durationMin: 120, status: "scheduled", customer: { name: "길찾기고객", phone: "010-1111-2222", address: "수원시 영통구 광교로 1" },
-          items: [{ type: "통돌이", qty: 1, work: "세척" }], total: 100000, payment: { method: "미정", paid: false }, workers: {}, createdBy: "smvivcjg03", createdAt: "2026-01-01T00:00:00Z" } } } });
+          items: [{ type: "벽걸이", qty: 1, work: "분해세척" }], total: 100000, payment: { method: "미정", paid: false }, workers: {}, createdBy: "smvivcjg03", createdAt: "2026-01-01T00:00:00Z" } } } });
       await ip.locator("[data-testid=card]", { hasText: "길찾기고객" }).locator("[data-testid=nav]").click();
       const enc = encodeURIComponent("수원시 영통구 광교로 1");
       const tm = ip.locator("[data-testid=nav-tmap]");
