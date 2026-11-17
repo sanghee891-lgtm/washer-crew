@@ -538,6 +538,7 @@ async function setTotalWeb(page, v) { await page.fill("[data-testid=f-total]", "
     await bp.click("[data-testid=b-send]");
     ok(await bp.isVisible("#e-items"), "기기");
     ok((await bp.innerText("#e-photo")).includes("세탁기 앞면 사진"), "사진 필수");
+    eq(await bp.getAttribute("[data-testid=ac-note]", "href"), "https://open.kakao.com/o/swCjpNji", "에어컨은 카톡 문의로 안내");
     ok(await bp.isVisible("#e-name"), "이름");
     ok(await bp.isVisible("#e-form"), "동의");
     eq(booked.length, 0);

@@ -46,6 +46,9 @@ header img { width: 64px; height: 64px; border-radius: 14px; border: 1px solid v
 h1 { margin: 0; font-size: 22px; }
 header p { margin: 2px 0 0; color: var(--ink-2); font-size: 14px; }
 form { display: grid; gap: 14px; }
+.ac-note { display: grid; gap: 2px; margin: 0 0 14px; padding: 12px 14px; border-radius: 14px; background: #fee500; color: #191919; text-decoration: none; }
+.ac-note b { font-size: 15px; }
+.ac-note span { font-size: 13px; color: #4a3f00; }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: grid; gap: 12px; }
 .card h2 { margin: 0; font-size: 17px; }
 label, .lab { display: block; font-weight: 700; font-size: 15px; margin-bottom: 6px; }
@@ -87,8 +90,12 @@ textarea.inp { height: 96px; padding: 10px 12px; resize: vertical; }
 <div class="wrap">
   <header>
     <img src="icons/icon-192.png" alt="세탁기 크루 로고">
-    <div><h1>세탁기 크루 예약</h1><p>세척 · 이전설치 · 철거. 남겨 주시면 확인 후 연락드려요.</p></div>
+    <div><h1>세탁기 크루 예약</h1><p>세탁기·건조기 세척 · 이전설치 · 철거. 남겨 주시면 확인 후 연락드려요.</p></div>
   </header>
+  <a class="ac-note" href="https://open.kakao.com/o/swCjpNji" target="_blank" rel="noopener" data-testid="ac-note">
+    <b>에어컨 세척은 카톡으로 문의해 주세요</b>
+    <span>이 페이지는 세탁기·건조기 예약만 받아요. 에어컨은 카톡 상담 ›</span>
+  </a>
 
   <form id="f" novalidate>
     <div class="card">
