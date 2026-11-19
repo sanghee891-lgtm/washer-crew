@@ -545,7 +545,8 @@
   function pushFailText(code) {
     var b = I ? I.browser() : "";
     var app = I && I.standalone() && (b === "android-chrome" || b === "samsung");
-    var site = app ? "휴대폰 <b>설정 → 애플리케이션 → 세탁기 크루 → 알림</b>을 <b>켜기</b>(목록에 없으면 <b>" + (b === "samsung" ? "삼성 인터넷" : "Chrome") + "</b> 앱을 열고 메뉴 → 설정 → 사이트 설정 → 알림 → washer-crew.pages.dev <b>허용</b>)"
+    var site = app && b === "samsung" ? "<b>삼성 인터넷</b> 앱을 열고 아래 메뉴(≡) → <b>설정 → 사이트 및 다운로드 → 알림</b>에서 washer-crew.pages.dev를 <b>허용</b>(목록에 없으면 휴대폰 <b>설정 → 애플리케이션 → 삼성 인터넷 → 알림</b>을 켠 뒤 다시 시도). 그래도 안 되면 <b>크롬</b>으로 washer-crew.pages.dev를 열어 홈 화면에 추가해 쓰면 잘 돼요. 설정"
+      : app ? "휴대폰 <b>설정 → 애플리케이션 → 세탁기 크루 → 알림</b>을 <b>켜기</b>(목록에 없으면 <b>" + (b === "samsung" ? "삼성 인터넷" : "Chrome") + "</b> 앱을 열고 메뉴 → 설정 → 사이트 설정 → 알림 → washer-crew.pages.dev <b>허용</b>)"
       : b === "android-chrome" ? "크롬 오른쪽 위 <b>⋮ → 설정 → 사이트 설정 → 알림</b>에서 washer-crew.pages.dev를 <b>허용</b>"
       : b === "samsung" ? "삼성 인터넷 메뉴(≡) → <b>설정 → 사이트 및 다운로드 → 알림</b>에서 이 사이트를 <b>허용</b>"
       : b === "ios-safari" || b === "ios-chrome" ? "아이폰 <b>설정 → 알림 → 세탁기 크루</b>에서 <b>알림 허용</b>"

@@ -624,7 +624,8 @@
     enable: async function () {
       try {
         if (!window.Notification || !SW) throw err("unsupported");
-        var perm = Notification.permission === "granted" ? "granted" : await askPermission();
+        // 삼성 인터넷 홈 화면 앱 등은 허용 창을 안 띄우고 대답도 안 함 → 10초 뒤 이유 안내
+        var perm = Notification.permission === "granted" ? "granted" : await withTimeout(askPermission(), 10000, "dismissed").catch(function () { return Notification.permission; });
         if (perm === "denied") throw err("denied");
         if (perm !== "granted") throw err("dismissed"); // 허용 창을 닫았거나 브라우저가 창을 조용히 막음
         var reg = await withTimeout(activeReg(), 15000, "sw_timeout");
