@@ -104,6 +104,8 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
   });
 
   await step("빈 달 안내 문구", async () => {
+    eq(await p1.getAttribute(".tab[aria-current=page]", "data-tab"), "cal", "첫 화면은 달력");
+    await p1.click("[data-testid=tab-list]");
     await p1.waitForSelector("[data-testid=empty]");
     ok((await txt(p1, "[data-testid=empty]")).includes("예약이 아직 없어요"));
   });
@@ -231,6 +233,7 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
     }, null, { timeout: 4000 });
     await p1.screenshot({ path: path.join(SHOTS, "m-rsvp.png") });
     // 박민수 '내 일정'
+    await p3.click("[data-testid=tab-list]");
     await p3.click("[data-testid=filter-mine]");
     eq(await p3.locator("[data-testid=card]").count(), 1, "박민수 내 일정");
     await p2.close(); await p3.close();
@@ -412,6 +415,7 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
     await d1.fill("[data-testid=f-addr]", "서울 중구 세종대로 110");
     await setTotal(d1, "95000");
     await d1.click("[data-testid=save]");
+    await d1.click("[data-testid=tab-list]");
     await d1.waitForSelector("table.tbl tr.row");
     const t = await d1.locator("table.tbl tr.row").first().innerText();
     ok(t.includes("PC고객") && t.includes("02-1234-5678") && t.includes("95,000원"), t);
@@ -442,6 +446,7 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
     await p.waitForSelector(".banner");
     ok((await txt(p, ".banner")).includes("보기 전용"));
     ok(!(await p.isVisible("[data-testid=add]")), "추가 버튼 숨김");
+    await p.click("[data-testid=tab-list]");
     await p.waitForSelector("[data-testid=card]");
     eq(await p.locator("[data-testid=rsvp-yes]").count(), 0, "참여 버튼 숨김");
     await c.close();
@@ -688,7 +693,7 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
       ok(await owner.isHidden("[data-testid=move-block]"));
       await owner.click("#sheet [data-x] >> nth=0");
     });
-    await step("예약 삭제 시 사진 파일도 정리", async () => {
+    await step("예약 삭제해도 사진은 남음(휴지통에서 되살릴 수 있게)", async () => {
       const before = +(await (await fetch(BASE + "__blobcount")).text());
       eq(before, 3, "삭제 전 파일 수");
       await owner.click("[data-testid=card] [data-act=detail]");
@@ -696,8 +701,8 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
       await owner.click("[data-testid=del-yes]");
       await owner.waitForSelector("[data-testid=empty]");
       await owner.waitForFunction(() => true);
-      for (let i = 0; i < 20 && +(await (await fetch(BASE + "__blobcount")).text()) > 0; i++) await owner.waitForTimeout(100);
-      eq(+(await (await fetch(BASE + "__blobcount")).text()), 0, "삭제 후 파일 수");
+      await owner.waitForTimeout(500);
+      eq(+(await (await fetch(BASE + "__blobcount")).text()), 3, "삭제 후 파일 수(휴지통 보관)");
     });
     await ctxP.close();
   }
@@ -742,24 +747,22 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
       ok(!(await modalOpen()));
       await onApp();
     });
-    await step("통계 탭 → 뒤로가기 → 예약목록", async () => {
+    await step("통계 탭 → 뒤로가기 → 달력", async () => {
       await f.locator("[data-testid=tab-stats]").click();
       await f.locator("[data-testid=tab-settings]").click();
       await back();
-      eq(await curTab(), "list");
+      eq(await curTab(), "cal");
       await onApp();
     });
-    await step("달력 → 예약 열기 → 뒤로 두 번: 입력 닫힘 → 예약목록", async () => {
-      await f.locator("[data-testid=tab-cal]").click();
-      await f.locator("[data-testid=cal-day-list] [data-act=detail]").first().click().catch(async () => {
-        await f.locator(".cell.today").click(); await f.locator("[data-testid=cal-day-list] [data-act=detail]").first().click();
-      });
+    await step("예약목록 → 예약 열기 → 뒤로 두 번: 입력 닫힘 → 달력", async () => {
+      await f.locator("[data-testid=tab-list]").click();
+      await f.locator("[data-testid=card] [data-act=detail]").first().click();
       ok(await sheetOpen());
       await back();
       ok(!(await sheetOpen()));
-      eq(await curTab(), "cal");
-      await back();
       eq(await curTab(), "list");
+      await back();
+      eq(await curTab(), "cal");
       await onApp();
     });
     await step("사진 크게 보기 → 뒤로: 사진 목록 → 뒤로: 사진 창 닫힘", async () => {
@@ -808,6 +811,7 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
     eq(await p.locator("[data-testid=conflict]").count(), 0, "예전 번호로 겹침 경고 안 함");
     await p.waitForSelector("[data-testid=pick-김영우]");
     await p.click("[data-testid=pick-김영우]");
+    await p.click("[data-testid=tab-list]");
     await p.click("[data-testid=filter-open]");
     eq(await p.locator("[data-testid=card]").count(), 2, "인원 부족에 포함");
     await p.click("[data-testid=filter-all]");
@@ -860,9 +864,11 @@ async function setTotal(page, v) { await page.fill("[data-testid=f-total]", "");
       localStorage.setItem("wb.staffId.u_boss2", "k");
     });
     await kim.reload();
+    await kim.click("[data-testid=tab-list]");
     await kim.waitForSelector("[data-testid=empty]");
     const jo = await newPage(c, { uid: "u_j" }, errors);
     await jo.goto(BASE);
+    await jo.click("[data-testid=tab-list]");
     await jo.waitForSelector("[data-testid=empty]");
 
     await step("입력 화면: 기기·작업이 고객 정보보다 위", async () => {
