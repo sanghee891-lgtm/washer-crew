@@ -495,6 +495,7 @@
   // ---------------- 휴대폰 알림·계정 ----------------
   async function refreshPushState() {
     if (!S.push) return;
+    S.pushDiag = null;
     try { S.pushState = await S.push.state(); } catch (e) { S.pushState = "unsupported"; }
     renderBanner();
     if (S.tab === "settings") renderBody();
@@ -540,17 +541,65 @@
       '<div class="notice-line">새 예약·고객 요청·내일 확인 문자를 앱을 닫아 두어도 알려 드려요.</div>' +
       '<div class="notice-acts">' + later + '<button class="btn primary" data-act="push-on" data-testid="push-on">알림 켜기</button></div></div>';
   }
+  // 알림 켜기가 안 될 때 이유별 안내(직원이 그대로 따라 할 수 있게)
+  function pushFailText(code) {
+    var b = I ? I.browser() : "";
+    var app = I && I.standalone() && (b === "android-chrome" || b === "samsung");
+    var site = app ? "휴대폰 <b>설정 → 애플리케이션 → 세탁기 크루 → 알림</b>을 <b>켜기</b>(목록에 없으면 <b>" + (b === "samsung" ? "삼성 인터넷" : "Chrome") + "</b> 앱을 열고 메뉴 → 설정 → 사이트 설정 → 알림 → washer-crew.pages.dev <b>허용</b>)"
+      : b === "android-chrome" ? "크롬 오른쪽 위 <b>⋮ → 설정 → 사이트 설정 → 알림</b>에서 washer-crew.pages.dev를 <b>허용</b>"
+      : b === "samsung" ? "삼성 인터넷 메뉴(≡) → <b>설정 → 사이트 및 다운로드 → 알림</b>에서 이 사이트를 <b>허용</b>"
+      : b === "ios-safari" || b === "ios-chrome" ? "아이폰 <b>설정 → 알림 → 세탁기 크루</b>에서 <b>알림 허용</b>"
+      : "주소창 왼쪽 <b>자물쇠(또는 설정) 아이콘 → 권한 → 알림 → 허용</b>";
+    site += "한 뒤, 이 화면으로 돌아와 <b>[다시 확인]</b>을 눌러 주세요";
+    var map = {
+      denied: "알림이 막혀 있어요. " + site + ".",
+      dismissed: "허용 창이 뜨지 않았거나 닫혔어요(크롬이 창을 조용히 막는 경우가 많아요). " + site + ".",
+      sw_timeout: "앱 준비가 끝나지 않았어요. 앱을 <b>완전히 닫았다가 다시 열고</b> 눌러 주세요.",
+      subscribe_timeout: "휴대폰의 알림 서비스가 응답하지 않아요. 와이파이·데이터를 확인하고, <b>절전 모드</b>를 끈 뒤 다시 눌러 주세요.",
+      subscribe_failed: "휴대폰의 알림 서비스에 연결하지 못했어요. <b>Google Play 서비스</b>가 꺼져 있거나 오래됐을 수 있어요. 크롬을 최신으로 업데이트하고 다시 눌러 주세요.",
+      save_failed: "알림은 켜졌는데 서버에 저장하지 못했어요. 인터넷 연결을 확인하고 다시 눌러 주세요.",
+      unsupported: "이 브라우저는 알림을 지원하지 않아요. 안드로이드는 <b>크롬</b>, 아이폰은 <b>사파리에서 홈 화면에 추가</b>한 뒤 열어 주세요."
+    };
+    return map[code] || "알림을 켜지 못했어요. 앱을 닫았다 다시 열고 눌러 주세요.";
+  }
+  var pushBusy = false;
   async function pushOn() {
-    try { await S.push.enable(); toast("알림을 켰어요."); }
-    catch (e) { toast(e && e.code === "denied" ? "알림이 막혀 있어요. 휴대폰 설정에서 이 앱의 알림을 허용해 주세요." : "알림을 켜지 못했어요. 다시 눌러 주세요."); }
+    if (pushBusy) return;
+    pushBusy = true;
+    toast("알림을 켜는 중… 허용 창이 뜨면 [허용]을 눌러 주세요.");
+    try { await S.push.enable(); S.pushFail = null; toast("알림을 켰어요."); }
+    catch (e) {
+      S.pushFail = (e && e.code) || "unknown";
+      toast("알림을 켜지 못했어요. 아래 안내를 확인해 주세요.");
+      if (S.tab !== "settings") setTab("settings");
+    }
+    finally { pushBusy = false; }
     refreshPushState();
+  }
+  // 직원이 캡처해 보내면 원인을 알 수 있는 점검 줄
+  function pushDiagHtml() {
+    if (!(S.push && S.push.diag)) return "";
+    if (!S.pushDiag && !S.pushDiagBusy) {
+      S.pushDiagBusy = true;
+      S.push.diag().then(function (d) { S.pushDiag = d; S.pushDiagBusy = false; if (S.tab === "settings") renderBody(); }, function () { S.pushDiagBusy = false; });
+    }
+    var d = S.pushDiag;
+    if (!d) return "";
+    var parts = [I ? I.browser() + (I.inApp() ? "/앱안(" + I.inApp() + ")" : "") : "", d.standalone ? "홈화면앱" : "브라우저",
+      "권한:" + d.permission, "SW:" + d.sw, d.pushManager ? "" : "푸시없음", d.lastErr ? "오류:" + d.lastErr.code : ""].filter(Boolean);
+    return '<p class="muted push-diag" data-testid="push-diag">점검 정보 · ' + esc(parts.join(" · ")) + "</p>";
   }
   function pushStateHtml() {
     var st = S.pushState;
+    var fail = S.pushFail && st !== "on" ? '<div class="banner push-fail" data-testid="push-fail">' + pushFailText(S.pushFail) + "</div>" : "";
+    return fail + pushStateBody(st) + pushDiagHtml();
+  }
+  function pushStateBody(st) {
     if (st === "on") return '<p style="margin:0 0 8px"><b>켜져 있어요.</b> 새 예약·고객 요청·내일 확인 문자를 알려 드려요.</p>' +
       '<div class="chips"><button class="btn" data-act="push-test" data-testid="push-test">시험 알림 보내기</button><button class="btn" data-act="push-off">알림 끄기</button></div>';
-    if (st === "off") return '<p style="margin:0 0 8px">꺼져 있어요.</p><button class="btn primary" data-act="push-on">알림 켜기</button>';
-    if (st === "denied") return '<p style="margin:0">알림이 막혀 있어요. 휴대폰 <b>설정 → 알림</b>에서 이 앱(또는 크롬)의 알림을 허용한 뒤 다시 열어 주세요.</p>';
+    if (st === "off") return '<p style="margin:0 0 8px">꺼져 있어요.</p><div class="chips"><button class="btn primary" data-act="push-on" data-testid="push-on-settings">알림 켜기</button>' +
+      (S.pushFail ? '<button class="btn" data-act="push-recheck">다시 확인</button>' : "") + "</div>";
+    if (st === "denied") return (S.pushFail ? "" : '<p style="margin:0 0 8px">' + pushFailText("denied") + "</p>") + '<button class="btn" data-act="push-recheck" data-testid="push-recheck">다시 확인</button>';
     if (st === "need-install") return '<p style="margin:0">아이폰은 사파리 아래 <b>공유</b> 버튼 → <b>홈 화면에 추가</b>를 누른 뒤, 홈 화면 아이콘으로 열어야 알림을 받을 수 있어요(iOS 16.4 이상).</p>';
     if (st === "unsupported") return I && I.inApp() ? I.inAppBoxHtml() : '<p style="margin:0">이 브라우저는 알림을 지원하지 않아요. 크롬(안드로이드)이나 사파리(아이폰)로 열어 주세요.</p>';
     return '<p class="muted" style="margin:0">확인 중…</p>';
@@ -1374,6 +1423,7 @@
       if (a === "open-reqs") return openRequests();
       if (a === "open-rem") return openReminders();
       if (a === "push-on") return pushOn();
+      if (a === "push-recheck") { S.pushFail = null; toast("다시 확인했어요."); refreshPushState().then(function () { if (S.pushState === "off" && window.Notification && Notification.permission === "granted") pushOn(); }); return; }
       if (a === "install") return doInstall();
       if (a === "install-later") { store("installLater", String(Date.now() + 3 * 86400000)); renderBanner(); return; }
       if (a === "push-later") { store("pushLater", String(Date.now() + 3 * 86400000)); renderBanner(); return; }

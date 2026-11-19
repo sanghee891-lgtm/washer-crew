@@ -572,6 +572,28 @@
   }
   function isIos() { return /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1); }
   function standalone() { return (window.matchMedia && matchMedia("(display-mode: standalone)").matches) || navigator.standalone === true; }
+  function withTimeout(pr, ms, code) {
+    return new Promise(function (resolve, reject) {
+      var t = setTimeout(function () { reject(err(code)); }, ms);
+      Promise.resolve(pr).then(function (v) { clearTimeout(t); resolve(v); }, function (e) { clearTimeout(t); reject(e); });
+    });
+  }
+  // 예전 휴대폰 브라우저는 결과를 콜백으로만 줌
+  function askPermission() {
+    return new Promise(function (resolve) {
+      var done = false, fin = function (v) { if (!done) { done = true; resolve(v || Notification.permission); } };
+      try { var r = Notification.requestPermission(fin); if (r && r.then) r.then(fin, function () { fin(); }); } catch (e) { fin(); }
+    });
+  }
+  // 서비스 워커가 등록·활성화될 때까지(실패했으면 한 번 더 등록)
+  async function activeReg() {
+    var reg = SW ? await SW.catch(function () { return null; }) : null;
+    if (!reg) { SW = navigator.serviceWorker.register("sw.js"); reg = await SW; }
+    if (reg.active) return reg;
+    var w = reg.installing || reg.waiting;
+    if (w) await new Promise(function (r) { w.addEventListener("statechange", function () { if (w.state === "activated") r(); }); });
+    return reg.active ? reg : navigator.serviceWorker.ready;
+  }
   async function currentSub() {
     var reg = SW && (await SW);
     if (!reg || !reg.pushManager) return null;
@@ -598,15 +620,35 @@
       var s = await currentSub().catch(function () { return null; });
       return s && Notification.permission === "granted" ? "on" : "off";
     },
+    // 단계마다 시간 제한을 두어 "눌러도 아무 반응 없음"이 없게 하고, 실패하면 이유(code)를 남김
     enable: async function () {
-      var perm = await Notification.requestPermission();
-      if (perm !== "granted") throw err("denied");
-      var reg = await SW;
-      if (!reg) throw err("unsupported");
-      reg = await navigator.serviceWorker.ready;
-      var sub = await reg.pushManager.getSubscription() ||
-        await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(CFG.vapidPublic) });
-      await saveSub(sub);
+      try {
+        if (!window.Notification || !SW) throw err("unsupported");
+        var perm = Notification.permission === "granted" ? "granted" : await askPermission();
+        if (perm === "denied") throw err("denied");
+        if (perm !== "granted") throw err("dismissed"); // 허용 창을 닫았거나 브라우저가 창을 조용히 막음
+        var reg = await withTimeout(activeReg(), 15000, "sw_timeout");
+        var sub = await reg.pushManager.getSubscription();
+        if (!sub) {
+          try {
+            sub = await withTimeout(reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(CFG.vapidPublic) }), 20000, "subscribe_timeout");
+          } catch (e) { throw e && e.code === "subscribe_timeout" ? e : err("subscribe_failed", e); }
+        }
+        try { await saveSub(sub); } catch (e) { throw err("save_failed", e); }
+        local("pushLastErr", null);
+      } catch (e) {
+        local("pushLastErr", { code: (e && e.code) || "unknown", msg: String((e && e.message) || e).slice(0, 120), at: new Date().toISOString() });
+        throw e;
+      }
+    },
+    // 점검 정보(직원이 화면을 캡처해 보내면 원인을 알 수 있게)
+    diag: async function () {
+      var reg = SW ? await SW.catch(function () { return null; }) : null;
+      return {
+        permission: window.Notification ? Notification.permission : "none",
+        pushManager: !!window.PushManager, sw: reg ? (reg.active ? "active" : reg.installing || reg.waiting ? "installing" : "registered") : "none",
+        standalone: standalone(), lastErr: local("pushLastErr")
+      };
     },
     disable: disablePushQuietly,
     test: async function () {
